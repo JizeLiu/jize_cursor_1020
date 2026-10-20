@@ -165,3 +165,10 @@ a[data-go], .link { cursor: pointer; }
 .hero-value { font-size: 40px; font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
 .hero-label { color: var(--muted); font-size: 12px; }
 .status-msg { max-width: 260px; word-break: break-all; font-size: 12px; }
+
+/* 部署示例 */
+.notice { background: color-mix(in srgb, var(--accent) 10%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 10px; padding: 12px 16px; margin-bottom: 16px; line-height: 1.8; }
+.example-item { display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 10px 12px; border-radius: 10px; background: var(--bg); border: 1px solid var(--border); cursor: pointer; width: 100%; align-items: flex-start; white-space: normal; }
+.example-item.active { border-color: var(--accent); }
+.example-item .muted { font-size: 12px; }
+.code { margin: 0; padding: 14px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; overflow: auto; max-height: 640px; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }

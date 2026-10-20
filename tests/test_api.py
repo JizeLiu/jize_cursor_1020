@@ -43,6 +43,28 @@ def test_connection_test(client, mock_base):
     assert not bad["ok"]
 
 
+def test_deploy_examples_are_read_only_scripts(client):
+    """部署示例只是展示脚本：每个登记的文件都存在、内容非空；Python 示例至少语法正确。"""
+    examples = client.get("/api/deploy-examples").json()
+    assert {"funasr-runtime", "funasr-pipeline", "vllm-omni-tts"} <= {e["id"] for e in examples}
+    for e in examples:
+        assert e["code"].strip() and e["title"] and e["tags"]
+        if e["file"].endswith(".py"):
+            compile(e["code"], e["file"], "exec")
+    assert any("VAD" in e["tags"] for e in examples) and any("声纹" in e["tags"] for e in examples)
+
+
+def test_http_asr_segments_keep_speaker(client, mock_base):
+    """流水线类服务（见部署示例 4）返回 segments 里的 spk，平台应原样传给页面。"""
+    m = client.post(
+        "/api/models",
+        json=dict(kind="asr", name="带声纹", protocol="openai_transcriptions", base_url=f"http://{mock_base}", extra={"mock_segments": "1"}),
+    ).json()
+    final = asr_file(client, m["id"], False, [])[-1]
+    assert [s["spk"] for s in final["segments"]] == [0, 1]
+    assert final["segments"][1]["start"] == 1.3
+
+
 def test_saved_model_status_and_unique_name(client, mock_base):
     live = client.post("/api/models", json=dict(kind="asr", name="在线", protocol="openai_transcriptions", base_url=f"http://{mock_base}")).json()
     dead = client.post("/api/models", json=dict(kind="asr", name="离线", protocol="openai_transcriptions", base_url="http://127.0.0.1:1")).json()

@@ -1,6 +1,7 @@
 """FastAPI 入口：所有 HTTP / WebSocket 接口都在这里，一眼能看全。
 
   模型管理   GET/POST /api/models   DELETE /api/models/{id}   POST /api/models/test   GET /api/models/{id}/status   GET /api/presets
+  部署示例   GET /api/deploy-examples（只读的示例脚本）
   ASR       POST /api/asr/file（上传文件）    WS /ws/asr（麦克风）
   TTS       POST /api/tts（流式 PCM）         GET /api/tts/files/{id}.wav（生成好的 WAV）
   唤醒/通话  WS /ws/wake    WS /ws/call
@@ -23,6 +24,7 @@ from pydantic import BaseModel
 from .asr_routes import file_events, handle_mic, parse_hotwords
 from .audio import pcm_to_wav
 from .config import DATA_DIR, ModelConfig, ModelStore
+from .deploy_examples import load_examples
 from .http_utils import ModelError, auth_headers, openai_url
 from .presets import PRESETS
 from .tts import stream_tts
@@ -56,6 +58,12 @@ def save_model(model: ModelConfig) -> ModelConfig:
 def delete_model(model_id: str) -> dict:
     store.delete(model_id)
     return {"ok": True}
+
+
+@app.get("/api/deploy-examples")
+def deploy_examples() -> list[dict]:
+    """「部署示例」页：只读的示例脚本，平台不会执行。"""
+    return load_examples()
 
 
 @app.get("/api/presets")

@@ -36,11 +36,15 @@ async def transcriptions(
     stream: bool = Form(False),
     hotwords: str = Form(""),
     prompt: str = Form(""),
+    mock_segments: str = Form(""),  # 模型 extra 里写 {"mock_segments": "1"} 时，模拟带说话人的流水线服务
 ):
     size = len(await file.read())
     hot = hotwords or prompt
     text = f"这是模拟的识别结果，收到音频 {size} 字节{f'，热词：{hot}' if hot else ''}。"
     if not stream:
+        if mock_segments:
+            segments = [{"text": "第一句。", "start": 0.0, "end": 1.2, "spk": 0}, {"text": "第二句。", "start": 1.3, "end": 2.5, "spk": 1}]
+            return {"text": "第一句。第二句。", "segments": segments}
         return {"text": text}
 
     async def sse():

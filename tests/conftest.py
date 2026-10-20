@@ -1,3 +1,5 @@
+"""测试公共部分：启动 mock_server 当模型、临时数据目录、造测试用的语音。"""
+
 import math
 import os
 import socket

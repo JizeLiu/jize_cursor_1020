@@ -1,3 +1,8 @@
+"""调用各类模型服务时共用的小工具：拼接地址、鉴权头、错误处理、解析 SSE 流。
+
+ModelError 的 message 会原样显示在页面上，所以写成人能看懂的话。
+"""
+
 import json
 from collections.abc import AsyncIterator
 

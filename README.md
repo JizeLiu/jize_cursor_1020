@@ -1,5 +1,7 @@
 # 语音模型体验平台
 
+> **第一次接手请先看 [`docs/HANDOFF.md`](docs/HANDOFF.md)**（怎么跑起来、怎么接真实模型、代码地图、排错）。设计细节见 [`docs/DESIGN.md`](docs/DESIGN.md)。
+
 体验自己部署的 **ASR / TTS** 模型的 Web 平台。模型都由你部署并提供接口（推荐 vLLM / vLLM-Omni，ASR 也可用 FunASR），平台负责调用和展示。
 
 打开首页能看到四大功能入口（点卡片进入对应页面）和一个独立的「模型管理」页：
@@ -10,6 +12,7 @@
 | 语音合成 TTS | PCM 流式实时播放、首包延迟、结果存成 WAV 整体回放和下载 |
 | 语音唤醒 | 页面上自定义唤醒词（可多个，监听中增删立即生效），说出唤醒词后才开始识别 |
 | 语音通话 | 选 ASR + TTS（+ 可选 LLM），像打电话一样对话，AI 说话时开口即可打断（可关闭） |
+| 部署示例 | 只读的示例脚本：vLLM / vLLM-Omni / FunASR 怎么部署，怎么给 ASR 配 VAD、标点、声纹（平台不会执行） |
 | 模型管理 | 统一登记模型（名称 + 接口地址）、一键模板、检测 API 是否在线（含延迟）；其他四个页面只按名称选择 |
 
 为什么不用 Gradio：它做不了「通话」需要的全双工（边听边播、随时打断）、精确的首包计时、持续监听麦克风的唤醒。所以保留 FastAPI + 很薄的网页，逻辑仍全是 Python。
@@ -47,10 +50,12 @@ app/                      Python 后端（FastAPI）
   ws_wake.py              语音唤醒的完整流程
   ws_call.py              语音通话的完整流程（一轮对话 = _run_turn）
 static/                   网页
-  index.html              五个页面的结构
+  index.html              所有页面的结构（首页、四大功能、模型管理、部署示例）
   js/audio.js             麦克风采集 + PCM 播放器
-  js/asr.js tts.js wake.js call.js models.js   各页面脚本
+  js/asr.js tts.js wake.js call.js models.js deploy.js   各页面脚本
+deploy_examples/          示例部署脚本（只读展示，不会被执行）
 mock_server.py            模拟模型服务
+docs/                     HANDOFF.md 交接文档、DESIGN.md 设计说明
 tests/                    自动测试（pytest）
 docs/DESIGN.md            设计说明（协议、流程图、已知限制）
 ```
@@ -70,7 +75,7 @@ docs/DESIGN.md            设计说明（协议、流程图、已知限制）
 ## 测试
 
 ```bash
-python -m pytest        # 31 个测试：热词格式、唤醒词、VAD、所有接口和 WebSocket 流程（用 mock_server 当模型）
+python -m pytest        # 33 个测试：热词格式、唤醒词、VAD、所有接口和 WebSocket 流程（用 mock_server 当模型）
 ```
 
 ## 注意

@@ -17,6 +17,7 @@
       <button data-page="wake">语音唤醒</button>
       <button data-page="call">语音通话</button>
       <button data-page="models">模型管理</button>
+      <button data-page="deploy">部署示例</button>
     </nav>
   </header>
 
@@ -57,6 +58,11 @@
         <strong>模型管理</strong>
         <span class="muted">添加 / 编辑 / 测试你部署的 ASR、TTS、对话模型（名称 + 接口地址）</span>
         <span class="models-count" id="home-model-count"></span>
+      </a>
+      <a class="models-entry" data-go="deploy">
+        <strong>部署示例</strong>
+        <span class="muted">怎么部署 ASR / TTS / LLM，以及给 ASR 配 VAD、标点、声纹（只是示例脚本，不会被执行）</span>
+        <span class="models-count">查看示例 →</span>
       </a>
     </section>
 
@@ -331,6 +337,27 @@
               <span id="m-test-result"></span>
             </div>
             <div class="error" id="m-error" hidden></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== 6. 部署示例（只读） ===================== -->
+    <section class="page" id="page-deploy" hidden>
+      <div class="page-head"><a data-go="home">← 首页</a><h2>部署示例</h2></div>
+      <div class="notice">
+        这里只是<b>示例脚本</b>，平台不会执行它们，也不会替你部署。你在自己的 GPU 机器上部署好以后，再到「<a class="link" data-go="models">模型管理</a>」登记名称和地址。
+        <br />VAD、标点、声纹这类配套模型<b>不是在平台里单独添加的</b>，而是在部署 ASR 服务时一起配好（看「FunASR」示例），然后在模型管理里勾选对应的「部署时已带 …」。
+      </div>
+      <div class="grid">
+        <div class="col"><div class="panel"><header><h3>示例列表</h3></header><div class="panel-body" id="deploy-list"></div></div></div>
+        <div class="col">
+          <div class="panel">
+            <header><h3 id="deploy-title">选择一个示例</h3><button id="deploy-copy" hidden>复制脚本</button></header>
+            <div class="panel-body">
+              <p class="muted" id="deploy-summary"></p>
+              <pre class="code" id="deploy-code"></pre>
+            </div>
           </div>
         </div>
       </div>

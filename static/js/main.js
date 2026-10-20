@@ -5,8 +5,9 @@ import './asr.js';
 import './tts.js';
 import './wake.js';
 import './call.js';
+import './deploy.js';
 
-const PAGES = ['home', 'asr', 'tts', 'wake', 'call', 'models'];
+const PAGES = ['home', 'asr', 'tts', 'wake', 'call', 'models', 'deploy'];
 const tabs = document.querySelectorAll('#tabs button');
 
 function showPage(name) {

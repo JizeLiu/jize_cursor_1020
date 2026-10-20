@@ -65,7 +65,7 @@ async def transcribe_http(
                 body = resp.json()
                 text = body.get("text") or body.get("choices", [{}])[0].get("message", {}).get("content", "")
                 segments = [
-                    {"text": s.get("text", ""), "start": s.get("start"), "end": s.get("end")}
+                    {"text": s.get("text", ""), "start": s.get("start"), "end": s.get("end"), "spk": s.get("spk")}
                     for s in body.get("segments") or []
                 ]
                 yield AsrUpdate(text, final=True, segments=segments)
