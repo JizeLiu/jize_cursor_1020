@@ -58,6 +58,21 @@ def test_saved_model_status_and_unique_name(client, mock_base):
     assert client.post("/api/models", json=live).status_code == 200  # 修改自己不算重名
 
 
+def test_features_resolve_api_through_registry(client, mock_base):
+    """功能接口只收「模型 id」；地址永远从模型管理里查，改了地址后同一个 id 立刻用新地址。"""
+    model = client.post("/api/models", json=dict(kind="asr", name="X", protocol="openai_transcriptions", base_url="http://127.0.0.1:1")).json()
+    failed = asr_file(client, model["id"], False, [])
+    assert failed[-1]["type"] == "error"
+
+    model["base_url"] = f"http://{mock_base}"
+    client.post("/api/models", json=model)
+    assert asr_file(client, model["id"], False, [])[-1]["type"] == "final"
+
+    resp = client.post("/api/asr/file", files={"file": ("a.wav", make_wav(), "audio/wav")}, data={"model_id": "不存在"})
+    assert resp.status_code == 400
+    assert client.post("/api/tts", json={"model_id": model["id"], "text": "hi"}).status_code == 400  # 类型不符
+
+
 # ---------------------------------------------------------------- ASR 文件
 
 
