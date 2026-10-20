@@ -1,65 +1,75 @@
 # 语音模型体验平台
 
-体验自己部署的 **ASR / TTS** 模型的 Web 平台。所有模型都由你自己部署并提供接口（推荐 vLLM / vLLM-Omni，ASR 也可用 FunASR），平台只负责调用与展示。
+体验自己部署的 **ASR / TTS** 模型的 Web 平台。模型都由你部署并提供接口（推荐 vLLM / vLLM-Omni，ASR 也可用 FunASR），平台负责调用和展示。
 
-| 功能 | 说明 |
+| 页面 | 能做什么 |
 | --- | --- |
-| 语音识别 ASR | 选模型、管理热词、流式/非流式、上传文件或麦克风录制（FunASR 支持边说边识别）、首字延迟 / RTF |
-| 语音合成 TTS | PCM 流式实时播放、首包延迟(TTFB)/首声音/RTF、结果存为 WAV 整体回放与下载、历史记录 |
-| 语音唤醒 | 实时监听麦克风，说出唤醒词才开始 ASR；唤醒词、容错、保持时长可配置 |
-| 语音通话 | 选 ASR + TTS（+ 可选 LLM），类似豆包电话：VAD → ASR → LLM → 按句 TTS 流式播放，支持打断 |
-| 模型管理 | 添加/编辑/测试连接、导入导出配置 |
+| 语音识别 ASR | 选模型、手动管理热词、流式/非流式、上传文件或麦克风录制、首字延迟和 RTF |
+| 语音合成 TTS | PCM 流式实时播放、首包延迟、结果存成 WAV 整体回放和下载 |
+| 语音唤醒 | 监听麦克风，说出唤醒词后才开始识别 |
+| 语音通话 | 选 ASR + TTS（+ 可选 LLM），像打电话一样对话，可打断 |
+| 模型管理 | 添加模型、一键模板、测试连接 |
 
 ## 快速开始
 
+需要 Python 3.11+，以及 ffmpeg（只有「上传文件」识别时用来解码音频）。
+
 ```bash
-npm install
-npm run mock        # 可选：本地模拟服务 http://127.0.0.1:9000（HTTP + FunASR WS），无需 GPU
-npm run dev         # 前端 http://localhost:5173，代理服务 :8787
+pip install -r requirements.txt
+python mock_server.py     # 可选：模拟模型服务（端口 9000），没有 GPU 也能把整个平台跑通
+python -m app             # 启动平台，打开 http://localhost:8787
 ```
 
-生产方式：`npm run build && npm start`，访问 http://localhost:8787。
+打开后先到「模型管理」添加模型。用模拟服务联调时：HTTP 类模型地址填 `http://127.0.0.1:9000`，FunASR 填 `ws://127.0.0.1:9000/`。
 
-> 麦克风需要安全上下文：请用 `localhost` 或 https 访问。远程使用时请前置 https 反向代理，或用 SSH 端口转发。
+> 麦克风只能在 `localhost` 或 https 下使用。在远程机器上跑时，请用 SSH 端口转发或 https 反向代理访问。
 
-首次打开到「模型管理」添加模型。用 mock 联调时：
+## 代码结构：想改哪里看哪里
 
-- ASR（vLLM 协议）：`http://127.0.0.1:9000`
-- ASR（FunASR）：`ws://127.0.0.1:9000`
-- TTS / LLM：`http://127.0.0.1:9000`
-
-## 架构
+整个平台 = **Python 后端做所有逻辑** + **一层很薄的网页**（只负责麦克风采集和播放声音）。网页是原生 HTML/JS，不需要 Node、不需要编译。
 
 ```
-浏览器 (React)  ──/api/proxy──▶  Node 代理  ──▶  你的 vLLM / vLLM-Omni (HTTP, SSE, 流式 PCM)
-                ──/api/ws-proxy─▶            ──▶  你的 FunASR (WebSocket)
+app/                      Python 后端（FastAPI）
+  main.py                 所有接口都在这一个文件里，先看它
+  config.py               模型配置的数据结构、保存到 data/models.json
+  presets.py              「模型管理」页的一键模板
+  asr.py                  调用 ASR：vLLM 协议 / FunASR WebSocket 协议
+  tts.py                  调用 TTS，返回 PCM 流
+  llm.py                  调用对话大模型（通话用）
+  hotwords.py             热词按各模型要求的格式拼进请求
+  vad.py                  VAD：把麦克风声音切成一句一句
+  wake.py                 唤醒词匹配
+  asr_routes.py           ASR 页的两个入口（文件 / 麦克风）
+  ws_wake.py              语音唤醒的完整流程
+  ws_call.py              语音通话的完整流程（一轮对话 = _run_turn）
+static/                   网页
+  index.html              五个页面的结构
+  js/audio.js             麦克风采集 + PCM 播放器
+  js/asr.js tts.js wake.js call.js models.js   各页面脚本
+mock_server.py            模拟模型服务
+tests/                    自动测试（pytest）
+docs/DESIGN.md            设计说明（协议、流程图、已知限制）
 ```
 
-浏览器直连模型服务会遇到 CORS，并且 API Key 会暴露在页面里，所以所有请求经 `server/` 的轻量代理转发（流式透传，不缓冲）。
-代理可以访问任意地址，**仅限可信环境使用**；公网部署请设置 `ALLOWED_HOSTS=host1,host2` 限制可访问的模型服务。
-环境变量：`PORT`（默认 8787）、`HOST`、`ALLOWED_HOSTS`、`INSECURE_TLS=1`（自签名 wss/https）。
+## 各模型怎么配置（含热词）
 
-## 支持的协议
+**热词不需要在部署时传**，而是每次请求时由前端带上；你在「ASR 页」手动添加的热词会随每次识别请求一起发给模型。不同模型的传法不同，在「模型管理」里选对「热词传递方式」即可：
 
-| 类型 | 协议 | 接口 |
-| --- | --- | --- |
-| ASR | `openai-transcriptions` | `POST /v1/audio/transcriptions`（multipart），`stream=true` 时解析 SSE |
-| ASR | `funasr-ws` | FunASR runtime WebSocket（online / offline / 2pass，热词 JSON） |
-| TTS | `openai-speech` | `POST /v1/audio/speech`，流式时 `response_format=pcm, stream=true` |
-| LLM | `openai-chat` | `POST /v1/chat/completions`（SSE） |
+| 模型 | 协议 | 热词传递方式 | 说明 |
+| --- | --- | --- | --- |
+| Fun-ASR-Nano（vLLM） | `openai_transcriptions` | `hotwords 字段` | vLLM 官方文档支持，逗号分隔。非英文请填语言（如 `zh`） |
+| Qwen3-ASR（vLLM） | `openai_transcriptions` | `prompt 字段` | 热词写进 prompt，作为模型上下文。vLLM 的 `hotwords` 字段对它是否生效取决于版本，用 prompt 最稳 |
+| Paraformer（FunASR） | `funasr_ws` | `FunASR JSON` | 连接建立时下发 `{"词": 权重}`。**必须部署 SeACo / contextual 版本**，普通版会忽略热词 |
 
-每个模型都有「额外请求参数」JSON，会合并进请求（用于各模型特有参数，如参考音频、task type 等）。
+注意：热词是「提高识别概率」的提示，不保证 100% 纠正；词太多或和音频无关反而会变差，建议少而准。vLLM 跑 ASR 需要安装 `vllm[audio]`。
 
-设计细节（VAD / 声纹如何部署、能力声明、扩展点）见 [docs/DESIGN.md](docs/DESIGN.md)。
+## 测试
 
-## 目录
-
+```bash
+python -m pytest        # 25 个测试：热词格式、唤醒词、VAD、所有接口和 WebSocket 流程（用 mock_server 当模型）
 ```
-server/   Node 代理 + mock 服务
-web/src/
-  asr/    ASR 适配器（openai / funasr-ws）
-  tts/    TTS 流式合成与指标
-  llm/    对话模型流式调用
-  audio/  麦克风采集、重采样、VAD、PCM 流式播放、WAV 编码
-  pages/  五个页面
-```
+
+## 注意
+
+- 这是本地/内网使用的工具：模型的 API Key 明文保存在 `data/models.json`（已加入 .gitignore），平台本身没有登录鉴权。
+- TTS 生成的 WAV 存在 `data/outputs/`，不会自动清理。

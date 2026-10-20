@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>语音模型体验平台</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='%234f9cff'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo">◉</span> 语音模型体验平台</div>
+    <nav class="tabs" id="tabs">
+      <button data-page="asr">语音识别 ASR</button>
+      <button data-page="tts">语音合成 TTS</button>
+      <button data-page="wake">语音唤醒</button>
+      <button data-page="call">语音通话</button>
+      <button data-page="models">模型管理</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- ===================== 1. 语音识别 ASR ===================== -->
+    <section class="page" id="page-asr">
+      <div class="grid">
+        <div class="col">
+          <div class="panel">
+            <header><h3>模型与参数</h3></header>
+            <div class="panel-body">
+              <label class="field"><span>ASR 模型</span><select id="asr-model"></select></label>
+              <div class="badges" id="asr-badges"></div>
+              <label class="check"><input type="checkbox" id="asr-stream" checked /> 流式输出</label>
+              <label class="field"><span>语言（可留空；Fun-ASR-Nano 建议填 zh）</span><input id="asr-language" placeholder="zh / en" /></label>
+              <small class="muted" id="asr-hint"></small>
+            </div>
+          </div>
+          <div id="asr-hotwords"></div>
+        </div>
+
+        <div class="col">
+          <div class="panel">
+            <header><h3>音频输入</h3></header>
+            <div class="panel-body">
+              <div class="tabs small" id="asr-source-tabs">
+                <button data-source="file" class="active">上传文件</button>
+                <button data-source="mic">麦克风</button>
+              </div>
+              <div id="asr-source-file" class="stack">
+                <input type="file" id="asr-file" accept="audio/*,video/*" />
+                <div class="row"><button class="primary" id="asr-run">开始识别</button></div>
+              </div>
+              <div id="asr-source-mic" class="stack" hidden>
+                <div class="row">
+                  <button class="primary" id="asr-rec-start">● 开始录制</button>
+                  <button class="danger" id="asr-rec-stop" hidden>■ 停止</button>
+                  <span class="rec-dot" id="asr-rec-time" hidden></span>
+                </div>
+                <div class="meter"><div class="meter-fill" id="asr-meter"></div></div>
+                <small class="muted" id="asr-mic-hint"></small>
+              </div>
+              <audio controls id="asr-audio" class="audio" hidden></audio>
+            </div>
+          </div>
+
+          <div class="panel">
+            <header><h3>识别结果</h3><button id="asr-copy">复制</button></header>
+            <div class="panel-body">
+              <div class="error" id="asr-error" hidden></div>
+              <div class="result-text" id="asr-text"><span class="muted">结果会显示在这里</span></div>
+              <div class="metrics" id="asr-metrics"></div>
+              <table class="segments" id="asr-segments" hidden>
+                <thead><tr><th>时间</th><th>说话人</th><th>文本</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== 2. 语音合成 TTS ===================== -->
+    <section class="page" id="page-tts" hidden>
+      <div class="grid">
+        <div class="col">
+          <div class="panel">
+            <header><h3>模型与参数</h3></header>
+            <div class="panel-body">
+              <label class="field"><span>TTS 模型</span><select id="tts-model"></select></label>
+              <label class="field"><span>音色 / voice（留空用模型默认）</span><input id="tts-voice" /></label>
+              <label class="field"><span>语速 <b id="tts-speed-label">1.0x</b></span><input type="range" id="tts-speed" min="0.5" max="2" step="0.1" value="1" /></label>
+              <label class="check"><input type="checkbox" id="tts-stream" checked /> 让模型流式输出（stream=true）</label>
+              <small class="muted">浏览器边收 PCM 边播放。采样率以「模型管理」里填的为准，必须与服务端一致。</small>
+            </div>
+          </div>
+        </div>
+
+        <div class="col">
+          <div class="panel">
+            <header><h3>合成文本</h3></header>
+            <div class="panel-body">
+              <textarea id="tts-text" rows="5">你好，欢迎体验语音合成平台。这是一段用于测试流式首包延迟的示例文本。</textarea>
+              <div class="row">
+                <button class="primary" id="tts-run">合成并播放</button>
+                <button id="tts-stop" hidden>停止</button>
+              </div>
+              <div class="error" id="tts-error" hidden></div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <header><h3>延迟与指标</h3></header>
+            <div class="panel-body"><div class="metrics" id="tts-metrics"></div></div>
+          </div>
+
+          <div class="panel">
+            <header><h3>回放与下载（WAV）</h3></header>
+            <div class="panel-body">
+              <span class="muted" id="tts-empty">合成完成后可在这里整体回放、下载</span>
+              <audio controls id="tts-audio" class="audio" hidden></audio>
+              <a class="button" id="tts-download" hidden>下载 WAV</a>
+              <ul class="history" id="tts-history"></ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== 3. 语音唤醒 ===================== -->
+    <section class="page" id="page-wake" hidden>
+      <div class="grid">
+        <div class="col">
+          <div class="panel">
+            <header><h3>模型与唤醒词</h3></header>
+            <div class="panel-body">
+              <label class="field"><span>ASR 模型</span><select id="wake-model"></select></label>
+              <label class="field"><span>唤醒词（多个用逗号分隔，可把常见误识别写法也加进去）</span><input id="wake-words" value="你好小智" /></label>
+              <label class="field"><span>模糊匹配容错 <b id="wake-fuzzy-label">25%</b></span><input type="range" id="wake-fuzzy" min="0" max="0.5" step="0.05" value="0.25" /></label>
+              <label class="field"><span>唤醒后保持时长 <b id="wake-awake-label">8s</b>（无人说话则回到待机）</span><input type="range" id="wake-awake" min="3" max="30" step="1" value="8" /></label>
+              <label class="field"><span>VAD 灵敏度：高于底噪 <b id="wake-sens-label">12</b> dB 算说话</span><input type="range" id="wake-sens" min="6" max="24" step="1" value="12" /></label>
+              <small class="muted">原理：VAD 切出每句话 → 送 ASR 转文字 → 文字里出现唤醒词才开始识别。待机时的语音也会发给 ASR，仅用于判断是否命中。</small>
+            </div>
+          </div>
+          <div id="wake-hotwords"></div>
+        </div>
+
+        <div class="col">
+          <div class="panel">
+            <header><h3>监听状态</h3></header>
+            <div class="panel-body">
+              <div class="wake-status" id="wake-status">
+                <div class="wake-orb"></div>
+                <div><strong id="wake-status-title">未开始</strong><div class="muted" id="wake-status-sub">点击开始后实时监听麦克风</div></div>
+              </div>
+              <div class="meter"><div class="meter-fill" id="wake-meter"></div></div>
+              <div class="row">
+                <button class="primary" id="wake-start">开始监听</button>
+                <button class="danger" id="wake-stop" hidden>停止监听</button>
+              </div>
+              <div class="error" id="wake-error" hidden></div>
+            </div>
+          </div>
+          <div class="panel">
+            <header><h3>唤醒后的识别结果</h3></header>
+            <div class="panel-body"><div class="result-text" id="wake-transcript"><span class="muted">唤醒后的识别文本会显示在这里</span></div></div>
+          </div>
+          <div class="panel">
+            <header><h3>语音段日志</h3></header>
+            <div class="panel-body"><ul class="log" id="wake-log"><li class="muted">暂无</li></ul></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== 4. 语音通话 ===================== -->
+    <section class="page" id="page-call" hidden>
+      <div class="grid">
+        <div class="col">
+          <div class="panel">
+            <header><h3>通话配置</h3></header>
+            <div class="panel-body">
+              <label class="field"><span>ASR 模型（听）</span><select id="call-asr"></select></label>
+              <label class="field"><span>TTS 模型（说）</span><select id="call-tts"></select></label>
+              <label class="field"><span>对话大模型（想，可选）</span><select id="call-llm"></select></label>
+              <label class="field"><span>系统提示词</span><textarea id="call-prompt" rows="4">你是一个语音通话助手。回答要简短、口语化，一次不超过三句话，不要使用 markdown、列表或表情符号。</textarea></label>
+              <label class="check"><input type="checkbox" id="call-barge" checked /> 允许打断（说话时中断 AI 播报）</label>
+              <small class="muted">链路：麦克风 → VAD → ASR → LLM（流式）→ 按句切分 → TTS（PCM 流式）→ 实时播放。建议戴耳机，避免扬声器的声音被麦克风拾取造成自我打断。</small>
+            </div>
+          </div>
+          <div id="call-hotwords"></div>
+        </div>
+
+        <div class="col">
+          <div class="panel">
+            <header><h3>通话</h3></header>
+            <div class="panel-body">
+              <div class="call-card" id="call-card">
+                <div class="avatar"><div class="ring"></div><span>AI</span></div>
+                <div class="call-info"><strong id="call-state">未接通</strong><span class="muted" id="call-time">点击拨打开始通话</span></div>
+                <button class="primary round" id="call-start">拨打</button>
+                <button class="danger round" id="call-stop" hidden>挂断</button>
+              </div>
+              <div class="meter"><div class="meter-fill" id="call-meter"></div></div>
+              <div class="error" id="call-error" hidden></div>
+            </div>
+          </div>
+          <div class="panel">
+            <header><h3>单轮延迟</h3></header>
+            <div class="panel-body"><div class="metrics" id="call-metrics"></div></div>
+          </div>
+          <div class="panel">
+            <header><h3>对话记录</h3></header>
+            <div class="panel-body"><div class="chat" id="call-chat"><span class="muted">通话内容会显示在这里</span></div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== 5. 模型管理 ===================== -->
+    <section class="page" id="page-models" hidden>
+      <div class="stack-page">
+        <div class="panel">
+          <header><h3>已配置的模型</h3></header>
+          <div class="panel-body">
+            <p class="muted">所有模型都由你自己部署并提供接口。点下面的模板快速添加，再按你的实际地址和模型名修改。配置保存在服务端的 data/models.json。</p>
+            <div class="row wrap" id="model-presets"></div>
+            <table class="models">
+              <thead><tr><th>类型</th><th>名称</th><th>协议</th><th>地址</th><th></th></tr></thead>
+              <tbody id="model-table"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel" id="model-editor" hidden>
+          <header><h3 id="model-editor-title">编辑模型</h3></header>
+          <div class="panel-body">
+            <div class="form-grid">
+              <label class="field"><span>名称</span><input id="m-name" /></label>
+              <label class="field"><span>协议</span><select id="m-protocol"></select></label>
+              <label class="field"><span>服务地址</span><input id="m-base-url" /></label>
+              <label class="field"><span>API Key（可选）</span><input id="m-api-key" type="password" /></label>
+              <label class="field" data-show="http"><span>model 名称（vllm serve 的 --served-model-name）</span><input id="m-model" /></label>
+              <label class="field" data-show="asr"><span>热词传递方式</span>
+                <select id="m-hotword-mode">
+                  <option value="none">不传热词</option>
+                  <option value="field">hotwords 字段，逗号分隔（Fun-ASR-Nano）</option>
+                  <option value="prompt">prompt 字段，作为上下文（Qwen3-ASR）</option>
+                  <option value="funasr_json">FunASR：{"词": 权重} JSON（SeACo-Paraformer）</option>
+                  <option value="funasr_text">FunASR：空格分隔的纯文本</option>
+                </select>
+              </label>
+              <label class="field" data-show="funasr"><span>FunASR 实时模式</span>
+                <select id="m-funasr-mode">
+                  <option value="2pass">2pass（实时 + 句尾纠正，推荐）</option>
+                  <option value="online">online（仅实时）</option>
+                  <option value="offline">offline（整句）</option>
+                </select>
+              </label>
+              <label class="field" data-show="tts"><span>PCM 采样率（Hz，须与服务端一致）</span><input id="m-sample-rate" type="number" value="24000" /></label>
+              <label class="field" data-show="tts"><span>默认音色</span><input id="m-voice" /></label>
+            </div>
+            <div data-show="asr" class="stack">
+              <span class="muted">声明该 ASR 部署时具备的能力（只用于界面提示和选择行为，平台不会重复实现）：</span>
+              <div class="caps-grid">
+                <label class="check"><input type="checkbox" id="m-streaming" /> 支持流式输出</label>
+                <label class="check"><input type="checkbox" id="m-has-vad" /> 部署时已带 VAD</label>
+                <label class="check"><input type="checkbox" id="m-has-punc" /> 部署时已带标点</label>
+                <label class="check"><input type="checkbox" id="m-has-speaker" /> 部署时已带声纹/说话人</label>
+              </div>
+            </div>
+            <label class="field"><span>额外请求参数（JSON，合并进请求；放各模型特有的参数）</span><textarea id="m-extra" rows="3" placeholder='{"temperature": 0}'></textarea></label>
+            <div class="row">
+              <button class="primary" id="m-save">保存</button>
+              <button id="m-test">测试连接</button>
+              <button id="m-cancel">取消</button>
+              <span id="m-test-result"></span>
+            </div>
+            <div class="error" id="m-error" hidden></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 热词管理组件：ASR / 唤醒 / 通话三个页面共用 -->
+  <template id="tpl-hotwords">
+    <div class="panel">
+      <header><h3>热词管理（<span class="hw-count">0</span>）</h3></header>
+      <div class="panel-body">
+        <div class="row">
+          <input class="hw-word" placeholder="输入热词，回车添加" />
+          <input class="hw-weight narrow" type="number" min="1" max="100" value="20" title="权重（仅 FunASR JSON 方式使用）" />
+          <button class="hw-add">添加</button>
+        </div>
+        <div class="chips hw-list"></div>
+        <small class="muted hw-hint"></small>
+      </div>
+    </div>
+  </template>
+
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>

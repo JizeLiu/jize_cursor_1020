@@ -1,77 +1,94 @@
 # 设计说明
 
-## 1. 模型都由用户部署：平台如何适配
-
-平台把「模型服务」抽象成 `ModelConfig`：协议 + 地址 + 能力声明。页面只依赖能力声明来决定展示哪些控件，不假设服务端一定具备某项能力。
+## 1. 整体结构
 
 ```
-ModelConfig {
-  kind: asr | tts | llm
-  protocol: openai-transcriptions | funasr-ws | openai-speech | openai-chat
-  baseUrl, apiKey, model
-  caps: { streaming, realtimeMic, hotwords, vad, punc, speaker }   // 仅 ASR
-  extraBody                                                        // 透传的模型特有参数
-}
+浏览器（只做麦克风采集、声音播放、界面）
+   │  HTTP / WebSocket（同源，无跨域问题）
+   ▼
+Python 后端（FastAPI）── 所有逻辑：热词拼装、VAD、唤醒、对话编排、延迟统计
+   │  HTTP / SSE / WebSocket
+   ▼
+你部署的模型：vLLM（ASR / LLM）、vLLM-Omni（TTS）、FunASR（ASR WebSocket）
 ```
 
-新增一种后端只需实现一个适配器（`web/src/asr/*`），并在 `asr/index.ts` 注册。
+为什么浏览器不直连模型：直连会遇到跨域，API Key 也会暴露在页面里。现在后端只会访问你在「模型管理」里配置过的地址，不是开放代理。
 
-## 2. VAD 与 CAM++ 声纹：要不要在部署时加？
+## 2. 热词
 
-结论：**VAD、标点这类能力建议在 ASR 服务端部署时一并带上；声纹按需。** 平台通过 `caps` 声明感知它们，不重复实现。
+结论：**热词是每次请求时带的参数，不是部署时配置。** 部署时只需要选对模型版本。
 
-| 能力 | 推荐位置 | 原因 | 平台行为 |
-| --- | --- | --- | --- |
-| VAD（如 FunASR fsmn-vad） | 服务端 | 长音频切分、2pass 句尾判断都依赖它，且在服务端更准 | 声明 `vad` 后，ASR 页直接上传长音频/实时推流，由服务端切分 |
-| 标点（ct-punc） | 服务端 | 是识别流水线的一环 | 仅展示标记 |
-| 说话人分离 / 声纹（CAM++） | 服务端流水线 | 与时间戳、分句耦合 | 声明 `speaker` 后，若结果带 `spk` 字段则在分句表里显示说话人 |
-| 客户端 VAD（能量法） | 浏览器 | 「语音唤醒」「通话」需要在客户端先切段、判断打断，延迟最低 | 始终启用，仅用于这两个功能 |
+| 模型 | 传法 | 部署侧要求 |
+| --- | --- | --- |
+| Fun-ASR-Nano（vLLM） | 表单字段 `hotwords=词1,词2` | 无 |
+| Qwen3-ASR（vLLM） | 表单字段 `prompt=词1 词2`（变成模型的上下文） | 无 |
+| Paraformer（FunASR） | WebSocket 首包 `hotwords={"词":权重}` | 必须是 SeACo / contextual 模型 |
 
-FunASR 的 `AutoModel(model=..., vad_model="fsmn-vad", punc_model="ct-punc", spk_model="cam++")` 就是把这些能力放进同一条服务端流水线。如果你的 ASR 是纯 vLLM 部署且不带 VAD，也可以正常使用——长音频请先在本地切分，唤醒和通话功能则由客户端 VAD 代劳。
+- 平台把「怎么传」做成模型的一项配置 `hotword_mode`（`field` / `prompt` / `funasr_json` / `funasr_text` / `none`），逻辑集中在 `app/hotwords.py` 一个文件。新模型的传法不一样时，加一种 mode 即可。
+- 热词存在浏览器（按模型分开），每次请求由前端随请求发给后端。
+- 热词只是「偏置」，不是强制替换。vLLM 的 Fun-ASR 验证记录里，单个热词有时不改变输出，重复写几次才改变——效果要用你自己的音频验证。
 
-> 尚未实现：把 CAM++ 作为**独立**声纹验证服务（说话人注册 + 验证，用于「只响应某个人」）。预留方式是新增 `kind: 'spk'` 的模型类型，在唤醒/通话链路的 VAD 之后、ASR 之前插入一步校验。
+## 3. VAD 与声纹（CAM++）
 
-## 3. ASR 页数据流
+| 能力 | 建议放哪 | 平台怎么处理 |
+| --- | --- | --- |
+| VAD | ASR 服务端（如 FunASR 的 fsmn-vad） | 在模型里勾选「部署时已带 VAD」，ASR 页提示由服务端切分长音频 |
+| 标点 | ASR 服务端 | 只作为标记显示 |
+| 说话人/声纹 | ASR 服务端流水线 | 勾选后，若结果带 `spk` 字段，分句表里会显示说话人 |
+| 客户端 VAD | 后端 `vad.py`（能量法） | 「语音唤醒」「通话」始终使用，用来切分语音和检测打断 |
 
-- **文件**：`File` →（funasr 协议：解码为 16k PCM 经 WS 发送；openai 协议：原文件 multipart 上传）。
-- **麦克风 + FunASR**：`MicCapture`（AudioWorklet，重采样 16k）→ WS 持续推流，2pass 的 `*-online` 作为实时草稿，`*-offline` 到达后替换为纠正后的句子。
-- **麦克风 + vLLM**：录制 → 停止 → 整段 WAV 上传（可选 SSE 流式输出文字）。
-- **热词**：按模型保存。FunASR 下发 `{词: 权重}` JSON；openai 协议可选拼进 `prompt` 或独立 `hotwords` 字段（取决于你部署的模型支持什么）。
+这几个勾选项**只影响界面提示**，平台不会重复实现这些能力。纯 vLLM 部署的 ASR 没有 VAD 也能正常使用，长音频请先自行切分。
 
-## 4. TTS 页数据流与指标
+尚未实现：把 CAM++ 作为独立的声纹验证服务（注册说话人 + 校验，用于「只响应某个人」）。扩展方式：增加一类模型，在 VAD 切段之后、ASR 之前插一步校验。
 
-`fetch` 的 `ReadableStream` 逐块读取 PCM(s16le) → `PcmStreamPlayer` 用 Web Audio 排队播放（处理奇数字节分包），同时累积 PCM，结束后加 44 字节头生成 WAV，供 `<audio>` 整体回放与下载。
+## 4. 协议
 
-| 指标 | 含义 |
+| 类型 | `protocol` | 接口 |
+| --- | --- | --- |
+| ASR | `openai_transcriptions` | `POST /v1/audio/transcriptions`（multipart）；`stream=true` 时返回 SSE |
+| ASR | `funasr_ws` | FunASR WebSocket：首包 JSON 配置 → 持续发 16k PCM → `{"is_speaking": false}` 结束 |
+| TTS | `openai_speech` | `POST /v1/audio/speech`，`response_format=pcm` + `stream=true`，返回 PCM 流 |
+| LLM | `openai_chat` | `POST /v1/chat/completions`，`stream=true` |
+
+每个模型的「额外请求参数」JSON 会原样合并进请求，用来放各模型特有的参数。
+
+## 5. 平台自己的接口
+
+| 接口 | 说明 |
 | --- | --- |
-| 响应头 | 点击合成 → 收到 HTTP 响应头 |
-| 首包延迟 (TTFB) | 点击合成 → 收到第一块音频数据，即「请求到生成第一个声音」的间隔 |
-| 首声音 | 点击合成 → 第一个采样送入播放（不含声卡输出延迟，输出延迟另行估算） |
-| RTF | 生成耗时 / 音频时长，< 1 才能无卡顿流式播放 |
+| `POST /api/asr/file` | 上传文件识别，返回 NDJSON 事件流 |
+| `WS /ws/asr` | 麦克风识别 |
+| `POST /api/tts` | 返回 PCM 流（响应头 `X-Sample-Rate`、`X-Audio-Id`）；后端同时存成 WAV |
+| `GET /api/tts/files/{id}.wav` | 取生成好的 WAV |
+| `WS /ws/wake`、`WS /ws/call` | 语音唤醒、语音通话 |
+| `GET/POST /api/models` 等 | 模型管理 |
 
-流式 PCM 采样率需与服务端一致，在模型配置里填写（默认 24000）。
+WebSocket 统一约定：浏览器先发一条 JSON 配置，随后发二进制 16k/16bit/单声道 PCM 帧，最后发 `{"type":"stop"}`。后端回 JSON 事件 `{"type": "...", ...}`；通话时还会回二进制 PCM 供浏览器播放。
 
-## 5. 语音唤醒
+## 6. 各功能的流程
 
-客户端 VAD 切出语音段 → 送 ASR → 文本里命中唤醒词才进入「已唤醒」状态；之后的语音段正常识别，超过「保持时长」无语音则回到待机。
+**ASR**：文件 → 后端 → 模型，结果以事件流逐步回传。FunASR 麦克风是实时转发，其他协议录完再整段发送。
 
-- 唤醒词可多个，匹配前去标点；支持按比例容忍编辑距离（模糊匹配）。
-- 没有拼音库，无法处理同音字，建议把常见误识别写法加入唤醒词列表。
-- 局限：待机阶段的语音段也会发给 ASR 服务；若要「不上传」的真正本地唤醒，需要接入本地 KWS 模型（后续可作为新适配器）。
+**TTS**：模型的 PCM 流 → 后端原样转发（同时累积） → 浏览器边收边播。首包延迟 = 点击合成到收到第一块音频的时间；结束后后端把累积的 PCM 存成 WAV，页面可整体回放、下载。
 
-## 6. 语音通话
-
+**语音唤醒**（`ws_wake.py`）：
 ```
-麦克风 → VAD 切段 → ASR → LLM(流式) → 按句切分 → TTS(PCM 流式) → 同一个播放器连续播放
+麦克风 → VAD 切成一句一句 → 每句送 ASR → 待机：文字里有唤醒词？ → 已唤醒 → 之后每句直接作为识别结果
+                                                        超过 awake_sec 没人说话 → 回到待机
 ```
+没有拼音库，无法处理同音字；可用「模糊匹配」容忍少量错字，或把常见误识别写法也加入唤醒词。待机时的语音也会发给 ASR（用于判断是否是唤醒词）。
 
-- 通话需要一个会「想」的模型，所以增加了可选的 LLM（OpenAI 兼容）。不选时是复读模式，可单独测 ASR+TTS 链路。
-- 首句在逗号处提前切分，降低首个声音的出现时间。
-- 打断：播报/思考期间 VAD 检测到用户开口 → 取消 LLM/TTS 请求并立即停止播放。使用扬声器时回声可能误触发，建议戴耳机。
-- 单轮延迟：ASR 识别、LLM 首字、TTS 首包、端到端（用户语音段结束 → 听到第一个声音，含 VAD 静音等待）。
+**语音通话**（`ws_call.py`，一轮对话 = `_run_turn`）：
+```
+用户说完一句 → ASR → LLM 流式生成 → 按句切分（首句在逗号处提前切）→ TTS 流式 → PCM 发给浏览器播放
+```
+- 需要一个对话大模型才能真正聊天；不配置时是复读模式，可单独测 ASR + TTS 链路。
+- 打断：AI 思考或说话期间，VAD 检测到用户开口 → 取消这一轮的 LLM/TTS 请求，并通知浏览器立刻停止播放。使用扬声器时回声可能误触发打断，建议戴耳机。
+- 延迟：ASR 识别、LLM 首字、TTS 首包、端到端（用户语音段结束 → 听到第一个声音，含 VAD 静音等待）。
 
-## 7. 已知限制 / 后续
+## 7. 已知限制
 
-- vLLM 的 ASR 走「整段上传」，真正的边说边识别目前仅 FunASR WS 支持（vLLM 的 `/v1/realtime` 可作为后续适配器）。
-- 客户端 VAD 是能量法，嘈杂环境需调灵敏度；可替换为 Silero VAD (ONNX)。
-- 模型配置存浏览器 localStorage，没有多用户与鉴权。
+- vLLM 协议的 ASR 目前是整段识别（可流式输出文字，但不是边说边识别）；真正的边说边识别只有 FunASR WebSocket 支持。vLLM 的 `/v1/realtime` 可作为后续新增的适配器。
+- VAD 是能量法，嘈杂环境需调灵敏度；可替换为 Silero VAD。
+- 平台没有登录鉴权，API Key 明文存在 `data/models.json`，仅适合本地/内网。
+- 协议字段按各模型文档实现，仅用模拟服务验证过；接入真实服务后请确认热词效果、TTS 采样率和 voice 参数。
