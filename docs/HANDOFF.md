@@ -74,6 +74,33 @@ python -m app                  # 终端 B：启动平台，端口 8787
 > Windows：命令相同，设置环境变量用 `set HOST=0.0.0.0` 再 `python -m app`（PowerShell 用 `$env:HOST="0.0.0.0"`）；
 > ffmpeg 需要自己下载并加入 PATH。
 
+### 在 Linux 服务器上跑（推荐方式）
+
+开发和测试就是在 Ubuntu 24.04 + Python 3.12 上做的，Linux 是最稳的环境。
+
+```bash
+sudo apt install -y python3-venv ffmpeg tmux      # CentOS 用 yum 装 python3 / ffmpeg / tmux
+git clone https://github.com/JizeLiu/jize_cursor_1020.git && cd jize_cursor_1020
+git checkout cursor/asr-tts-playground-3ff6
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python -m pytest                                  # 先确认环境没问题
+tmux new -s platform                              # 放进 tmux，断开 SSH 也不会停
+python -m app                                     # 平台监听 127.0.0.1:8787
+```
+
+然后在**你自己的电脑**上开一个终端做端口转发，浏览器访问 <http://localhost:8787>：
+
+```bash
+ssh -L 8787:localhost:8787 用户@服务器IP
+```
+
+要点：
+- **Python 要 3.10 以上，建议 3.11/3.12**（用到了 3.10 才有的语法）。服务器自带的 3.8/3.9 不行，用 conda 或 pyenv 装新的。
+- 平台和 vLLM / FunASR 在同一台服务器时，「模型管理」里地址直接填 `http://127.0.0.1:端口`（FunASR 填 `ws://127.0.0.1:端口`）。
+- 用 SSH 转发访问时浏览器看到的是 `localhost`，麦克风可以直接用；如果直接用服务器 IP 访问（`HOST=0.0.0.0`），浏览器会因为不是 https 而禁用麦克风。
+- 防火墙/云服务器安全组不需要开放 8787（SSH 转发走的是 22 端口）。
+
 ---
 
 ## 4. 接真实模型：推荐顺序
