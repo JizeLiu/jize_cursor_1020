@@ -275,12 +275,12 @@
       <div class="page-head"><a data-go="home">← 首页</a><h2>模型管理</h2></div>
       <div class="stack-page">
         <div class="panel">
-          <header><h3>已配置的模型</h3></header>
+          <header><h3>已配置的模型</h3><button id="check-all">检测全部是否在线</button></header>
           <div class="panel-body">
-            <p class="muted">所有模型都由你自己部署并提供接口。点下面的模板快速添加，再按你的实际地址和模型名修改。配置保存在服务端的 data/models.json。</p>
+            <p class="muted">先在这里登记模型的「名称 + 接口地址」并检测是否在线；之后在 ASR / TTS / 唤醒 / 通话页面只需按名称选择，不用再填地址。点下面的模板快速添加，再按你的实际地址和模型名修改。配置保存在服务端的 data/models.json。</p>
             <div class="row wrap" id="model-presets"></div>
             <table class="models">
-              <thead><tr><th>类型</th><th>名称</th><th>协议</th><th>地址</th><th></th></tr></thead>
+              <thead><tr><th>类型</th><th>名称</th><th>协议</th><th>地址</th><th>状态</th><th></th></tr></thead>
               <tbody id="model-table"></tbody>
             </table>
           </div>

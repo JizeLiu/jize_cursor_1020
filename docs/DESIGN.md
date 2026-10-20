@@ -60,6 +60,7 @@ Python 后端（FastAPI）── 所有逻辑：热词拼装、VAD、唤醒、�
 | `WS /ws/asr` | 麦克风识别 |
 | `POST /api/tts` | 返回 PCM 流（响应头 `X-Sample-Rate`、`X-Audio-Id`）；后端同时存成 WAV |
 | `GET /api/tts/files/{id}.wav` | 取生成好的 WAV |
+| `GET /api/models/{id}/status`、`POST /api/models/test` | 检测已保存/表单中的模型 API 是否在线（HTTP 请求 `/v1/models`，FunASR 尝试建立 WebSocket），返回延迟 |
 | `WS /ws/wake`、`WS /ws/call` | 语音唤醒、语音通话 |
 | `GET/POST /api/models` 等 | 模型管理 |
 

@@ -1,6 +1,6 @@
 """FastAPI 入口：所有 HTTP / WebSocket 接口都在这里，一眼能看全。
 
-  模型管理   GET/POST /api/models   DELETE /api/models/{id}   POST /api/models/test   GET /api/presets
+  模型管理   GET/POST /api/models   DELETE /api/models/{id}   POST /api/models/test   GET /api/models/{id}/status   GET /api/presets
   ASR       POST /api/asr/file（上传文件）    WS /ws/asr（麦克风）
   TTS       POST /api/tts（流式 PCM）         GET /api/tts/files/{id}.wav（生成好的 WAV）
   唤醒/通话  WS /ws/wake    WS /ws/call
@@ -9,6 +9,7 @@
 
 import json
 import re
+import time
 import uuid
 from pathlib import Path
 
@@ -45,7 +46,10 @@ def list_models() -> list[ModelConfig]:
 
 @app.post("/api/models")
 def save_model(model: ModelConfig) -> ModelConfig:
-    return store.upsert(model)
+    try:
+        return store.upsert(model)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
 
 
 @app.delete("/api/models/{model_id}")
@@ -59,9 +63,9 @@ def presets() -> list[ModelConfig]:
     return PRESETS
 
 
-@app.post("/api/models/test")
-async def test_model(model: ModelConfig) -> dict:
-    """测试连接：HTTP 服务请求 /v1/models，FunASR 服务尝试建立 WebSocket。"""
+async def check_model(model: ModelConfig) -> dict:
+    """检测模型 API 是否存活：HTTP 服务请求 /v1/models，FunASR 服务尝试建立 WebSocket。"""
+    started = time.perf_counter()
     try:
         if model.protocol == "funasr_ws":
             async with websockets.connect(model.base_url, additional_headers=auth_headers(model), open_timeout=6):
@@ -71,8 +75,23 @@ async def test_model(model: ModelConfig) -> dict:
                 resp = await client.get(openai_url(model.base_url, "models"), headers=auth_headers(model))
                 resp.raise_for_status()
     except Exception as e:  # noqa: BLE001 —— 任何失败都原样告诉用户
-        return {"ok": False, "message": f"{type(e).__name__}: {e}"}
-    return {"ok": True, "message": "连接成功"}
+        return {"ok": False, "message": f"{type(e).__name__}: {e}", "latency_ms": None}
+    return {"ok": True, "message": "连接成功", "latency_ms": round((time.perf_counter() - started) * 1000)}
+
+
+@app.post("/api/models/test")
+async def test_model(model: ModelConfig) -> dict:
+    """测试表单里还没保存的配置。"""
+    return await check_model(model)
+
+
+@app.get("/api/models/{model_id}/status")
+async def model_status(model_id: str) -> dict:
+    """检测已保存的模型是否在线。"""
+    try:
+        return await check_model(store.get(model_id))
+    except KeyError as e:
+        raise HTTPException(404, str(e)) from e
 
 
 # ---------------------------------------------------------------- ASR

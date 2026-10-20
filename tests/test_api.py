@@ -43,6 +43,21 @@ def test_connection_test(client, mock_base):
     assert not bad["ok"]
 
 
+def test_saved_model_status_and_unique_name(client, mock_base):
+    live = client.post("/api/models", json=dict(kind="asr", name="在线", protocol="openai_transcriptions", base_url=f"http://{mock_base}")).json()
+    dead = client.post("/api/models", json=dict(kind="asr", name="离线", protocol="openai_transcriptions", base_url="http://127.0.0.1:1")).json()
+    ok = client.get(f"/api/models/{live['id']}/status").json()
+    assert ok["ok"] and ok["latency_ms"] is not None
+    assert not client.get(f"/api/models/{dead['id']}/status").json()["ok"]
+    assert client.get("/api/models/nope/status").status_code == 404
+
+    dup = client.post("/api/models", json=dict(kind="asr", name="在线", protocol="funasr_ws", base_url="ws://x"))
+    assert dup.status_code == 400 and "同名" in dup.json()["detail"]
+    client.post("/api/models", json=dict(kind="tts", name="在线", protocol="openai_speech", base_url="http://x"))  # 不同类型可以重名
+    live["base_url"] = "http://other"
+    assert client.post("/api/models", json=live).status_code == 200  # 修改自己不算重名
+
+
 # ---------------------------------------------------------------- ASR 文件
 
 

@@ -83,6 +83,11 @@ class ModelStore:
         return m
 
     def upsert(self, model: ModelConfig) -> ModelConfig:
+        model.name = model.name.strip()
+        if not model.name:
+            raise ValueError("模型名称不能为空")
+        if any(m.name == model.name and m.kind == model.kind and m.id != model.id for m in self._models.values()):
+            raise ValueError(f"已经有同名的 {model.kind.upper()} 模型「{model.name}」，请换一个名字")
         if not model.id:
             model.id = uuid.uuid4().hex[:8]
         self._models[model.id] = model

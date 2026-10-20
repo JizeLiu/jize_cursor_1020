@@ -28,6 +28,22 @@ export let models = [];
 
 export const getModel = (id) => models.find((m) => m.id === id);
 
+/** 各模型最近一次的在线检测结果：{ 模型id: {ok, message, latency_ms} }，模型管理页负责更新。 */
+export const status = {};
+const statusMark = (id) => (status[id] ? (status[id].ok ? '● ' : '○ ') : '');
+const statusSuffix = (id) => (status[id] && !status[id].ok ? '（离线）' : '');
+const optionLabel = (m) => `${statusMark(m.id)}${m.name}${statusSuffix(m.id)}`;
+
+export async function checkModel(id) {
+  try {
+    status[id] = await api(`/api/models/${id}/status`);
+  } catch (err) {
+    status[id] = { ok: false, message: err.message, latency_ms: null };
+  }
+  document.dispatchEvent(new Event('status-changed'));
+  return status[id];
+}
+
 export async function loadModels() {
   models = await api('/api/models');
   document.dispatchEvent(new Event('models-changed'));
@@ -37,7 +53,7 @@ export async function loadModels() {
 export function bindModelSelect(select, kind, { optional = false } = {}) {
   const fill = () => {
     const previous = select.value;
-    const options = models.filter((m) => m.kind === kind).map((m) => `<option value="${m.id}">${escapeHtml(m.name)}</option>`);
+    const options = models.filter((m) => m.kind === kind).map((m) => `<option value="${m.id}">${escapeHtml(optionLabel(m))}</option>`);
     if (optional) options.unshift('<option value="">不使用（复读模式）</option>');
     if (!options.length) options.push('<option value="">（请先到「模型管理」添加模型）</option>');
     select.innerHTML = options.join('');
@@ -45,6 +61,12 @@ export function bindModelSelect(select, kind, { optional = false } = {}) {
     select.dispatchEvent(new Event('change'));
   };
   document.addEventListener('models-changed', fill);
+  document.addEventListener('status-changed', () => {
+    [...select.options].forEach((o) => {
+      const m = getModel(o.value);
+      if (m) o.textContent = optionLabel(m);
+    });
+  });
   fill();
 }
 

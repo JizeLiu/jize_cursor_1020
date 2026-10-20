@@ -164,3 +164,4 @@ a[data-go], .link { cursor: pointer; }
 .hero-metric { text-align: center; padding: 12px; border-radius: 12px; background: var(--bg); border: 1px solid var(--border); }
 .hero-value { font-size: 40px; font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
 .hero-label { color: var(--muted); font-size: 12px; }
+.status-msg { max-width: 260px; word-break: break-all; font-size: 12px; }

@@ -1,5 +1,5 @@
-// 模型管理页：增删改模型、一键模板、测试连接。数据都存在后端（data/models.json）。
-import { $, api, escapeHtml, loadModels, models, postJson, showError } from './common.js';
+// 模型管理页：增删改模型、一键模板、测试连接、检测各模型是否在线。数据都存在后端（data/models.json）。
+import { $, api, checkModel, escapeHtml, loadModels, models, postJson, showError, status } from './common.js';
 
 const PROTOCOLS = {
   asr: [['openai_transcriptions', 'vLLM：/v1/audio/transcriptions'], ['funasr_ws', 'FunASR WebSocket']],
@@ -21,6 +21,13 @@ async function renderPresets() {
   };
 }
 
+function statusCell(id) {
+  const s = status[id];
+  if (!s) return '<span class="muted">未检测</span>';
+  if (s.ok) return `<span class="ok">● 在线 ${s.latency_ms} ms</span>`;
+  return `<span class="bad" title="${escapeHtml(s.message)}">○ 离线</span><div class="muted status-msg">${escapeHtml(s.message)}</div>`;
+}
+
 function renderTable() {
   $('#model-table').innerHTML = models.length
     ? models
@@ -28,15 +35,20 @@ function renderTable() {
           (m) => `<tr>
             <td><span class="badge kind-${m.kind}">${KIND_NAME[m.kind]}</span></td>
             <td>${escapeHtml(m.name)}</td><td>${m.protocol}</td><td class="mono">${escapeHtml(m.base_url)}</td>
-            <td class="row"><button data-edit="${m.id}">编辑</button><button data-delete="${m.id}">删除</button></td>
+            <td>${statusCell(m.id)}</td>
+            <td class="row"><button data-check="${m.id}">检测</button><button data-edit="${m.id}">编辑</button><button data-delete="${m.id}">删除</button></td>
           </tr>`,
         )
         .join('')
-    : '<tr><td colspan="5" class="muted">还没有模型。点上面的模板开始添加；本地联调可先运行 <code>python mock_server.py</code>，地址填 http://127.0.0.1:9000（FunASR 填 ws://127.0.0.1:9000）。</td></tr>';
+    : '<tr><td colspan="6" class="muted">还没有模型。点上面的模板开始添加；本地联调可先运行 <code>python mock_server.py</code>，地址填 http://127.0.0.1:9000（FunASR 填 ws://127.0.0.1:9000）。</td></tr>';
 }
 
 $('#model-table').addEventListener('click', async (e) => {
-  const { edit, delete: del } = e.target.dataset;
+  const { edit, delete: del, check } = e.target.dataset;
+  if (check) {
+    e.target.textContent = '检测中…';
+    await checkModel(check);
+  }
   if (edit) openEditor({ ...models.find((m) => m.id === edit) });
   if (del && confirm('确定删除这个模型？')) {
     await api(`/api/models/${del}`, { method: 'DELETE' });
@@ -44,7 +56,18 @@ $('#model-table').addEventListener('click', async (e) => {
   }
 });
 
-document.addEventListener('models-changed', renderTable);
+async function checkAll() {
+  $('#check-all').disabled = true;
+  await Promise.all(models.map((m) => checkModel(m.id)));
+  $('#check-all').disabled = false;
+}
+
+$('#check-all').addEventListener('click', checkAll);
+document.addEventListener('status-changed', renderTable);
+document.addEventListener('models-changed', () => {
+  renderTable();
+  models.filter((m) => !status[m.id]).forEach((m) => checkModel(m.id));
+});
 
 // ---------------------------------------------------------------- 编辑表单
 
