@@ -1,0 +1,381 @@
+"""接口测试：用 mock_server 当模型，走完整的 HTTP / WebSocket 流程。"""
+
+import io
+import json
+import wave
+
+from .conftest import speech_pcm
+
+
+def make_wav(seconds: float = 1.0) -> bytes:
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(b"\x01\x00" * int(16000 * seconds))
+    return buf.getvalue()
+
+
+def ndjson(resp) -> list[dict]:
+    return [json.loads(line) for line in resp.text.splitlines() if line]
+
+
+# ---------------------------------------------------------------- 模型管理
+
+
+def test_models_crud_and_presets(client):
+    assert client.get("/api/models").json() == []
+    assert len(client.get("/api/presets").json()) >= 5
+    saved = client.post("/api/models", json=dict(kind="asr", name="a", protocol="funasr_ws", base_url="ws://x")).json()
+    assert saved["id"]
+    assert [m["name"] for m in client.get("/api/models").json()] == ["a"]
+    client.delete(f"/api/models/{saved['id']}")
+    assert client.get("/api/models").json() == []
+
+
+def test_connection_test(client, mock_base):
+    ok = client.post("/api/models/test", json=dict(kind="asr", name="a", protocol="openai_transcriptions", base_url=f"http://{mock_base}")).json()
+    assert ok["ok"]
+    ws = client.post("/api/models/test", json=dict(kind="asr", name="a", protocol="funasr_ws", base_url=f"ws://{mock_base}/")).json()
+    assert ws["ok"]
+    bad = client.post("/api/models/test", json=dict(kind="asr", name="a", protocol="openai_transcriptions", base_url="http://127.0.0.1:1")).json()
+    assert not bad["ok"]
+
+
+def test_deploy_examples_are_read_only_scripts(client):
+    """部署示例只是展示脚本：每个登记的文件都存在、内容非空；Python 示例至少语法正确。"""
+    examples = client.get("/api/deploy-examples").json()
+    assert {"funasr-runtime", "funasr-pipeline", "vllm-omni-tts"} <= {e["id"] for e in examples}
+    for e in examples:
+        assert e["code"].strip() and e["title"] and e["tags"]
+        if e["file"].endswith(".py"):
+            compile(e["code"], e["file"], "exec")
+    assert any("VAD" in e["tags"] for e in examples) and any("声纹" in e["tags"] for e in examples)
+
+
+def test_http_asr_segments_keep_speaker(client, mock_base):
+    """流水线类服务（见部署示例 4）返回 segments 里的 spk，平台应原样传给页面。"""
+    m = client.post(
+        "/api/models",
+        json=dict(kind="asr", name="带声纹", protocol="openai_transcriptions", base_url=f"http://{mock_base}", extra={"mock_segments": "1"}),
+    ).json()
+    final = asr_file(client, m["id"], False, [])[-1]
+    assert [s["spk"] for s in final["segments"]] == [0, 1]
+    assert final["segments"][1]["start"] == 1.3
+
+
+def test_saved_model_status_and_unique_name(client, mock_base):
+    live = client.post("/api/models", json=dict(kind="asr", name="在线", protocol="openai_transcriptions", base_url=f"http://{mock_base}")).json()
+    dead = client.post("/api/models", json=dict(kind="asr", name="离线", protocol="openai_transcriptions", base_url="http://127.0.0.1:1")).json()
+    ok = client.get(f"/api/models/{live['id']}/status").json()
+    assert ok["ok"] and ok["latency_ms"] is not None
+    assert not client.get(f"/api/models/{dead['id']}/status").json()["ok"]
+    assert client.get("/api/models/nope/status").status_code == 404
+
+    dup = client.post("/api/models", json=dict(kind="asr", name="在线", protocol="funasr_ws", base_url="ws://x"))
+    assert dup.status_code == 400 and "同名" in dup.json()["detail"]
+    client.post("/api/models", json=dict(kind="tts", name="在线", protocol="openai_speech", base_url="http://x"))  # 不同类型可以重名
+    live["base_url"] = "http://other"
+    assert client.post("/api/models", json=live).status_code == 200  # 修改自己不算重名
+
+
+def test_features_resolve_api_through_registry(client, mock_base):
+    """功能接口只收「模型 id」；地址永远从模型管理里查，改了地址后同一个 id 立刻用新地址。"""
+    model = client.post("/api/models", json=dict(kind="asr", name="X", protocol="openai_transcriptions", base_url="http://127.0.0.1:1")).json()
+    failed = asr_file(client, model["id"], False, [])
+    assert failed[-1]["type"] == "error"
+
+    model["base_url"] = f"http://{mock_base}"
+    client.post("/api/models", json=model)
+    assert asr_file(client, model["id"], False, [])[-1]["type"] == "final"
+
+    resp = client.post("/api/asr/file", files={"file": ("a.wav", make_wav(), "audio/wav")}, data={"model_id": "不存在"})
+    assert resp.status_code == 400
+    assert client.post("/api/tts", json={"model_id": model["id"], "text": "hi"}).status_code == 400  # 类型不符
+
+
+# ---------------------------------------------------------------- ASR 文件
+
+
+def asr_file(client, model_id, stream, hotwords):
+    resp = client.post(
+        "/api/asr/file",
+        files={"file": ("a.wav", make_wav(), "audio/wav")},
+        data={"model_id": model_id, "stream": str(stream).lower(), "hotwords": json.dumps(hotwords)},
+    )
+    return ndjson(resp)
+
+
+def test_asr_file_non_stream(client, models):
+    events = asr_file(client, models["asr_field"], False, [])
+    assert [e["type"] for e in events] == ["final"]
+    assert "模拟的识别结果" in events[0]["text"] and events[0]["audio_sec"] == 1.0
+
+
+def test_asr_file_stream_hotwords_field(client, models):
+    events = asr_file(client, models["asr_field"], True, [{"word": "通义千问", "weight": 20}, {"word": "阿里", "weight": 20}])
+    assert events[-1]["type"] == "final"
+    assert any(e["type"] == "partial" for e in events)
+    assert "热词：通义千问,阿里" in events[-1]["text"]
+
+
+def test_asr_file_hotwords_via_prompt(client, models):
+    events = asr_file(client, models["asr_prompt"], False, [{"word": "通义千问", "weight": 20}, {"word": "阿里", "weight": 20}])
+    assert "热词：通义千问 阿里" in events[-1]["text"]
+
+
+def test_asr_file_funasr(client, models):
+    events = asr_file(client, models["asr_funasr"], True, [{"word": "阿里巴巴", "weight": 30}])
+    final = events[-1]
+    assert final["type"] == "final" and "实时识别结果" in final["text"]
+    assert '"阿里巴巴": 30' in final["text"]
+    assert final["segments"][0]["spk"] == 0
+
+
+def test_asr_file_bad_model_id(client):
+    resp = client.post("/api/asr/file", files={"file": ("a.wav", make_wav(), "audio/wav")}, data={"model_id": "nope"})
+    assert resp.status_code == 400
+
+
+def test_asr_file_unreachable_model_reports_error(client):
+    mid = client.post("/api/models", json=dict(kind="asr", name="bad", protocol="openai_transcriptions", base_url="http://127.0.0.1:1")).json()["id"]
+    events = asr_file(client, mid, False, [])
+    assert events[0]["type"] == "error" and "连接模型" in events[0]["message"]
+
+
+# ---------------------------------------------------------------- ASR 麦克风
+
+
+def test_asr_mic_funasr_live(client, models):
+    with client.websocket_connect("/ws/asr") as ws:
+        ws.send_json({"model_id": models["asr_funasr"], "hotwords": [{"word": "阿里巴巴", "weight": 30}]})
+        pcm = speech_pcm()
+        for i in range(0, len(pcm), 3200):
+            ws.send_bytes(pcm[i : i + 3200])
+        ws.send_json({"type": "stop"})
+        events = []
+        while not events or events[-1]["type"] != "final":
+            events.append(ws.receive_json())
+    assert any(e["type"] == "partial" for e in events)
+    assert "实时识别结果" in events[-1]["text"] and events[-1]["finish_ms"] >= 0
+
+
+def test_asr_mic_http_record_then_transcribe(client, models):
+    with client.websocket_connect("/ws/asr") as ws:
+        ws.send_json({"model_id": models["asr_field"], "stream": True})
+        ws.send_bytes(speech_pcm())
+        ws.send_json({"type": "stop"})
+        events = []
+        while not events or events[-1]["type"] != "final":
+            events.append(ws.receive_json())
+    assert "模拟的识别结果" in events[-1]["text"]
+
+
+# ---------------------------------------------------------------- TTS
+
+
+def test_tts_stream_and_wav(client, models):
+    with client.stream("POST", "/api/tts", json={"model_id": models["tts"], "text": "你好世界", "stream": True}) as resp:
+        assert resp.status_code == 200 and resp.headers["x-sample-rate"] == "24000"
+        pcm = b"".join(resp.iter_bytes())
+        audio_id = resp.headers["x-audio-id"]
+    assert len(pcm) > 24000  # 至少 0.5 秒
+    wav = client.get(f"/api/tts/files/{audio_id}.wav")
+    assert wav.status_code == 200 and wav.content[:4] == b"RIFF"
+    with wave.open(io.BytesIO(wav.content)) as w:
+        assert w.getframerate() == 24000 and w.getnframes() * 2 == len(pcm)
+
+
+def test_tts_file_rejects_bad_id(client):
+    assert client.get("/api/tts/files/..%2Fsecret.wav").status_code in (404, 422)
+    assert client.get("/api/tts/files/" + "0" * 32 + ".wav").status_code == 404
+
+
+def test_tts_model_error_is_http_502(client):
+    mid = client.post("/api/models", json=dict(kind="tts", name="bad", protocol="openai_speech", base_url="http://127.0.0.1:1")).json()["id"]
+    resp = client.post("/api/tts", json={"model_id": mid, "text": "x"})
+    assert resp.status_code == 502
+
+
+def test_mic_live_by_vad_for_vllm_models(client, models):
+    """vLLM 类模型勾选流式后，麦克风按「一句一句」实时出字：每说完一句就有 partial，停止后 final 带分句时间。"""
+    cfg = {"model_id": models["asr_field"], "stream": True, "hotwords": []}
+    with client.websocket_connect("/ws/asr") as ws:
+        ws.send_json(cfg)
+        send_pcm(ws, speech_pcm(bursts=2))
+        partials = []
+        while len(partials) < 2:  # 说完两句，先后各出一次 partial（文字越来越长）
+            ev = ws.receive_json()
+            assert ev["type"] == "partial"
+            partials.append(ev["text"])
+        assert len(partials[1]) > len(partials[0])
+        ws.send_json({"type": "stop"})
+        final = ws.receive_json()
+    assert final["type"] == "final" and len(final["segments"]) == 2
+    first, second = final["segments"]
+    assert 0 <= first["start"] < first["end"] <= second["start"] < second["end"]
+    assert final["audio_sec"] > 4 and final["text"].count("模拟的识别结果") == 2
+
+
+def test_mic_non_stream_still_records_whole_clip(client, models):
+    with client.websocket_connect("/ws/asr") as ws:
+        ws.send_json({"model_id": models["asr_field"], "stream": False})
+        send_pcm(ws, speech_pcm(bursts=2))
+        ws.send_json({"type": "stop"})
+        final = ws.receive_json()
+    assert final["type"] == "final" and final["text"].count("模拟的识别结果") == 1  # 整段当一次识别
+
+
+def test_saved_wavs_are_pruned(client, models, monkeypatch):
+    import app.main as main
+
+    monkeypatch.setattr(main, "MAX_SAVED_WAVS", 2)
+    for i in range(4):
+        client.post("/api/tts", json={"model_id": models["tts"], "text": f"第{i}句"})
+    assert len(list(main.OUTPUT_DIR.glob("*.wav"))) == 2
+
+
+# ---------------------------------------------------------------- 唤醒 / 通话
+
+
+def collect_until(ws, stop_type: str, limit: int = 200) -> list[dict]:
+    events = []
+    for _ in range(limit):
+        ev = ws.receive_json()
+        events.append(ev)
+        if ev["type"] == stop_type:
+            return events
+    raise AssertionError(f"没等到 {stop_type}：{events[-5:]}")
+
+
+def send_pcm(ws, pcm: bytes) -> None:
+    for i in range(0, len(pcm), 3200):
+        ws.send_bytes(pcm[i : i + 3200])
+
+
+def test_wake_flow(client, models):
+    cfg = {"model_id": models["asr_field"], "wake_words": ["模拟的识别"], "fuzzy": 0, "awake_sec": 30}
+    with client.websocket_connect("/ws/wake") as ws:
+        ws.send_json(cfg)
+        assert ws.receive_json()["state"] == "sleeping"
+        send_pcm(ws, speech_pcm())
+        events = collect_until(ws, "wake")
+        assert any(e["type"] == "log" and e["hit"] for e in events)
+        assert any(e["type"] == "state" and e["state"] == "awake" for e in events)
+        # 唤醒词之后的同一句内容，作为第一条识别结果
+        assert collect_until(ws, "transcript")[-1]["text"].startswith("结果")
+        # 已唤醒后的下一句应直接成为识别结果
+        send_pcm(ws, speech_pcm())
+        events = collect_until(ws, "transcript")
+        assert "模拟的识别结果" in events[-1]["text"]
+        ws.send_json({"type": "stop"})
+
+
+def test_wake_words_can_be_changed_while_listening(client, models):
+    cfg = {"model_id": models["asr_field"], "wake_words": ["完全不相关"], "fuzzy": 0, "awake_sec": 30}
+    with client.websocket_connect("/ws/wake") as ws:
+        ws.send_json(cfg)
+        ws.receive_json()
+        send_pcm(ws, speech_pcm())
+        assert collect_until(ws, "log")[-1]["hit"] is False
+        # 用户在页面上改了唤醒词：不用重新开始监听，立刻生效
+        ws.send_json({"type": "update", "wake_words": ["模拟的识别"]})
+        send_pcm(ws, speech_pcm())
+        events = collect_until(ws, "wake")
+        assert any(e["type"] == "log" and e["hit"] for e in events)
+        ws.send_json({"type": "stop"})
+
+
+def test_wake_word_not_matched_stays_asleep(client, models):
+    cfg = {"model_id": models["asr_field"], "wake_words": ["你好小智"], "fuzzy": 0}
+    with client.websocket_connect("/ws/wake") as ws:
+        ws.send_json(cfg)
+        ws.receive_json()
+        send_pcm(ws, speech_pcm())
+        events = collect_until(ws, "log")
+        assert events[-1]["hit"] is False
+        ws.send_json({"type": "stop"})
+
+
+def test_call_flow_with_llm(client, models):
+    cfg = {"asr_id": models["asr_field"], "tts_id": models["tts"], "llm_id": models["llm"], "barge_in": False}
+    with client.websocket_connect("/ws/call") as ws:
+        ws.send_json(cfg)
+        send_pcm(ws, speech_pcm())
+        got_audio, texts, metrics = False, [], {}
+        for _ in range(500):
+            msg = ws.receive()
+            if msg.get("bytes"):
+                got_audio = True
+                break
+            ev = json.loads(msg["text"])
+            if ev["type"] in ("user_text", "assistant_text"):
+                texts.append(ev["text"])
+            if ev["type"] == "metrics":
+                metrics = ev
+        ws.send_json({"type": "stop"})
+    assert got_audio
+    assert any("模拟的识别结果" in t for t in texts)
+    assert {"asr_ms", "llm_first_ms", "tts_first_ms"} <= metrics.keys()
+
+
+def test_call_echo_mode_without_llm(client, models):
+    cfg = {"asr_id": models["asr_field"], "tts_id": models["tts"], "barge_in": False}
+    with client.websocket_connect("/ws/call") as ws:
+        ws.send_json(cfg)
+        send_pcm(ws, speech_pcm())
+        notes = []
+        for _ in range(100):
+            msg = ws.receive()
+            if msg.get("bytes"):
+                break
+            ev = json.loads(msg["text"])
+            if ev["type"] == "assistant_text":
+                notes.append(ev.get("note"))
+        ws.send_json({"type": "stop"})
+    assert notes and "复读" in notes[0]
+
+
+def receive_call_events(ws, until, limit=800):
+    """收通话事件直到 until(ev) 为真；二进制 PCM 记为 {"type": "audio"}。"""
+    events = []
+    for _ in range(limit):
+        msg = ws.receive()
+        ev = {"type": "audio"} if msg.get("bytes") else json.loads(msg["text"])
+        events.append(ev)
+        if until(ev):
+            return events
+    raise AssertionError(f"没等到预期事件：{[e['type'] for e in events[-8:]]}")
+
+
+def test_call_barge_in_stops_ai_speech(client, models):
+    """AI 正在说话时用户开口：服务端取消本轮、通知浏览器清空播放，并把用户的新话当作下一轮。"""
+    cfg = {"asr_id": models["asr_field"], "tts_id": models["tts"], "barge_in": True}
+    with client.websocket_connect("/ws/call") as ws:
+        ws.send_json(cfg)
+        send_pcm(ws, speech_pcm())
+        receive_call_events(ws, lambda e: e["type"] == "state" and e["state"] == "speaking")
+
+        send_pcm(ws, speech_pcm())  # AI 还在说，用户又说话了
+        events = receive_call_events(ws, lambda e: e["type"] == "interrupted")
+        kinds = [e["type"] for e in events]
+        assert "clear" in kinds and kinds.index("clear") < kinds.index("interrupted")
+
+        after = receive_call_events(ws, lambda e: e["type"] == "user_text")  # 打断的那句话被识别成新一轮
+        assert after[-1]["text"]
+        ws.send_json({"type": "stop"})
+
+
+def test_call_without_barge_in_ignores_speech_while_ai_talks(client, models):
+    cfg = {"asr_id": models["asr_field"], "tts_id": models["tts"], "barge_in": False}
+    with client.websocket_connect("/ws/call") as ws:
+        ws.send_json(cfg)
+        send_pcm(ws, speech_pcm())
+        receive_call_events(ws, lambda e: e["type"] == "state" and e["state"] == "speaking")
+        send_pcm(ws, speech_pcm())
+        events = receive_call_events(ws, lambda e: e["type"] == "turn_end")
+        kinds = [e["type"] for e in events]
+        assert "clear" not in kinds and "interrupted" not in kinds
+        assert kinds.count("user_text") == 0  # 说话被忽略，没有开启新一轮
+        ws.send_json({"type": "stop"})
