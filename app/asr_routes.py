@@ -7,10 +7,11 @@ from collections.abc import AsyncIterator
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from .asr import asr_events, transcribe_funasr, transcribe_http, transcribe_pcm
-from .audio import decode_to_pcm16k, pcm_seconds
+from .asr import asr_events, transcribe_funasr, transcribe_http, transcribe_pcm, transcribe_text
+from .audio import SAMPLE_RATE, decode_to_pcm16k, pcm_seconds
 from .config import Hotword, ModelConfig, ModelStore
 from .http_utils import ModelError
+from .vad import EnergyVad
 from .ws_utils import read_config, recv, send_event
 
 EXPECTED_ERRORS = (ModelError, RuntimeError, KeyError, ValueError)
@@ -56,6 +57,8 @@ async def handle_mic(ws: WebSocket, store: ModelStore) -> None:
         hotwords = parse_hotwords(cfg.get("hotwords"))
         if model.protocol == "funasr_ws":
             await _live(ws, model, hotwords)
+        elif cfg.get("stream") and model.streaming:
+            await _live_by_vad(ws, model, hotwords, cfg)
         else:
             await _record_then_transcribe(ws, model, hotwords, cfg)
     except WebSocketDisconnect:
@@ -70,7 +73,7 @@ async def handle_mic(ws: WebSocket, store: ModelStore) -> None:
 
 
 async def _record_then_transcribe(ws: WebSocket, model: ModelConfig, hotwords: list[Hotword], cfg: dict) -> None:
-    """vLLM 这类整段识别的模型：录完（收到 stop）再整段发出去。"""
+    """vLLM 这类整段识别的模型（非流式）：录完（收到 stop）再整段发出去。"""
     chunks: list[bytes] = []
     while True:
         msg = await recv(ws)
@@ -82,6 +85,56 @@ async def _record_then_transcribe(ws: WebSocket, model: ModelConfig, hotwords: l
     updates = transcribe_pcm(model, pcm, hotwords=hotwords, language=cfg.get("language", ""), stream=bool(cfg.get("stream")))
     async for event in asr_events(updates, pcm_seconds(pcm)):
         await ws.send_text(json.dumps(event, ensure_ascii=False))
+
+
+async def _live_by_vad(ws: WebSocket, model: ModelConfig, hotwords: list[Hotword], cfg: dict) -> None:
+    """vLLM 这类只能整段识别的模型，也要做到「边说边出字」：
+
+    用 VAD 在后端把麦克风声音切成一句一句，说完一句（停顿约 0.7 秒）就把这一句送去识别，
+    识别完立刻用 partial 事件把「到目前为止的全部文字」发给浏览器；点停止后识别最后一句并发 final。
+    效果上是「一句一句地出字」，不是逐字出字（逐字需要模型本身支持流式输入，如 FunASR）。
+    """
+    vad = EnergyVad()
+    todo: asyncio.Queue[tuple[bytes, float] | None] = asyncio.Queue()  # (一句话的 PCM, 这句话结束的时刻/秒)
+    done: list[dict] = []  # 已识别好的句子 [{text, start, end, spk}]
+
+    async def worker() -> None:
+        while (item := await todo.get()) is not None:
+            pcm, end_sec = item
+            text = await transcribe_text(model, pcm, hotwords=hotwords, language=cfg.get("language", ""))
+            if text:
+                start = max(0.0, end_sec - pcm_seconds(pcm))
+                done.append({"text": text, "start": start, "end": end_sec, "spk": None})
+                await send_event(ws, "partial", text=" ".join(d["text"] for d in done))
+
+    task = asyncio.create_task(worker())
+    received = 0  # 已收到的 PCM 字节数，用来推算每句话的时间位置
+    try:
+        while True:
+            msg = await recv(ws)
+            if isinstance(msg, dict):
+                if msg.get("type") == "stop":
+                    break
+                continue
+            received += len(msg)
+            for event in vad.feed(msg):
+                if event.kind == "segment":
+                    await todo.put((event.pcm, received / 2 / SAMPLE_RATE))
+        stopped_at = time.perf_counter()
+        for event in vad.flush():  # 点停止时还没说完的那一句
+            await todo.put((event.pcm, received / 2 / SAMPLE_RATE))
+        await todo.put(None)
+        await task  # worker 里模型出错的话，异常在这里抛出
+    finally:
+        task.cancel()
+    await send_event(
+        ws,
+        "final",
+        text=" ".join(d["text"] for d in done),
+        segments=done,
+        audio_sec=received / 2 / SAMPLE_RATE,
+        finish_ms=(time.perf_counter() - stopped_at) * 1000,
+    )
 
 
 async def _live(ws: WebSocket, model: ModelConfig, hotwords: list[Hotword]) -> None:

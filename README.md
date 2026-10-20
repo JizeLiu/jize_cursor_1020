@@ -75,7 +75,7 @@ docs/DESIGN.md            设计说明（协议、流程图、已知限制）
 ## 测试
 
 ```bash
-python -m pytest        # 33 个测试：热词格式、唤醒词、VAD、所有接口和 WebSocket 流程（用 mock_server 当模型）
+python -m pytest        # 36 个测试：热词格式、唤醒词、VAD、所有接口和 WebSocket 流程（用 mock_server 当模型）
 ```
 
 ## 注意

@@ -33,6 +33,7 @@ from .ws_wake import handle_wake
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 OUTPUT_DIR = DATA_DIR / "outputs"
+MAX_SAVED_WAVS = 200  # TTS 生成的 WAV 最多保留这么多个，超出的删最旧的
 
 app = FastAPI(title="语音模型体验平台")
 store = ModelStore()
@@ -146,6 +147,12 @@ class TtsRequest(BaseModel):
     stream: bool = True  # 是否让模型流式输出
 
 
+def prune_outputs() -> None:
+    files = sorted(OUTPUT_DIR.glob("*.wav"), key=lambda p: p.stat().st_mtime)
+    for old in files[: max(0, len(files) - MAX_SAVED_WAVS)]:
+        old.unlink(missing_ok=True)
+
+
 @app.post("/api/tts")
 async def tts(req: TtsRequest) -> StreamingResponse:
     """把模型返回的 PCM 原样流式转发给浏览器；同时攒起来，结束后存成 WAV（响应头里有 id）。"""
@@ -174,6 +181,7 @@ async def tts(req: TtsRequest) -> StreamingResponse:
             data = b"".join(pcm)
             OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
             (OUTPUT_DIR / f"{audio_id}.wav").write_bytes(pcm_to_wav(data[: len(data) // 2 * 2], sample_rate))
+            prune_outputs()
 
     return StreamingResponse(
         body(),

@@ -198,6 +198,44 @@ def test_tts_model_error_is_http_502(client):
     assert resp.status_code == 502
 
 
+def test_mic_live_by_vad_for_vllm_models(client, models):
+    """vLLM 类模型勾选流式后，麦克风按「一句一句」实时出字：每说完一句就有 partial，停止后 final 带分句时间。"""
+    cfg = {"model_id": models["asr_field"], "stream": True, "hotwords": []}
+    with client.websocket_connect("/ws/asr") as ws:
+        ws.send_json(cfg)
+        send_pcm(ws, speech_pcm(bursts=2))
+        partials = []
+        while len(partials) < 2:  # 说完两句，先后各出一次 partial（文字越来越长）
+            ev = ws.receive_json()
+            assert ev["type"] == "partial"
+            partials.append(ev["text"])
+        assert len(partials[1]) > len(partials[0])
+        ws.send_json({"type": "stop"})
+        final = ws.receive_json()
+    assert final["type"] == "final" and len(final["segments"]) == 2
+    first, second = final["segments"]
+    assert 0 <= first["start"] < first["end"] <= second["start"] < second["end"]
+    assert final["audio_sec"] > 4 and final["text"].count("模拟的识别结果") == 2
+
+
+def test_mic_non_stream_still_records_whole_clip(client, models):
+    with client.websocket_connect("/ws/asr") as ws:
+        ws.send_json({"model_id": models["asr_field"], "stream": False})
+        send_pcm(ws, speech_pcm(bursts=2))
+        ws.send_json({"type": "stop"})
+        final = ws.receive_json()
+    assert final["type"] == "final" and final["text"].count("模拟的识别结果") == 1  # 整段当一次识别
+
+
+def test_saved_wavs_are_pruned(client, models, monkeypatch):
+    import app.main as main
+
+    monkeypatch.setattr(main, "MAX_SAVED_WAVS", 2)
+    for i in range(4):
+        client.post("/api/tts", json={"model_id": models["tts"], "text": f"第{i}句"})
+    assert len(list(main.OUTPUT_DIR.glob("*.wav"))) == 2
+
+
 # ---------------------------------------------------------------- 唤醒 / 通话
 
 

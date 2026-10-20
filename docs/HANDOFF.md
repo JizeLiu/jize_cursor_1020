@@ -25,7 +25,7 @@
 
 ## 2. 重要：目前验证到什么程度
 
-- **已验证**：用 `mock_server.py`（模拟的模型服务）把所有流程跑通——自动测试 33 项通过，
+- **已验证**：用 `mock_server.py`（模拟的模型服务）把所有流程跑通——自动测试 36 项通过，
   另外在真实 Chrome（假麦克风）里跑过完整的页面操作。
 - **没有验证**：**还没有连过真实的 vLLM / vLLM-Omni / FunASR**。所以明天接真实模型时，
   可能遇到「接口字段和模拟的不完全一致」的小问题（见第 7 节排错）。这是最可能需要调整的地方。
@@ -67,6 +67,12 @@ python -m app                  # 终端 B：启动平台，端口 8787
 
 > 麦克风只能在 `localhost` 或 https 下使用。如果平台跑在远程服务器上，请用 SSH 端口转发
 > （`ssh -L 8787:localhost:8787 用户@服务器`），再访问 `localhost:8787`。
+>
+> 平台**默认只允许本机访问**（127.0.0.1）。想让局域网里的其他电脑访问：`HOST=0.0.0.0 python -m app`。
+> 平台没有登录鉴权，API Key 明文存在 `data/models.json`，只在可信内网这样做。
+>
+> Windows：命令相同，设置环境变量用 `set HOST=0.0.0.0` 再 `python -m app`（PowerShell 用 `$env:HOST="0.0.0.0"`）；
+> ffmpeg 需要自己下载并加入 PATH。
 
 ---
 
@@ -211,6 +217,7 @@ data/                        运行时生成：models.json（模型登记）、o
 
 ## 9. 已知限制 & 后续可以做的
 
+- vLLM 类 ASR 的麦克风「流式」是后端 VAD 切句后一句一句出字（说完停顿约 0.7 秒才出），不是逐字出字；逐字只有 FunASR 支持。
 - 唤醒基于「ASR 转文字再匹配」，待机时的语音也会发给 ASR；同音字靠加误识别写法或模糊匹配兜底。
 - 通话的打断靠能量 VAD + 浏览器回声消除，外放时仍可能误触发（要彻底解决需服务端回声消除）。
 - 能量 VAD 在嘈杂环境下不如专用 VAD 模型；可以换成 FunASR 的 fsmn-vad / silero-vad（改 `app/vad.py` 即可，接口不变）。
@@ -222,7 +229,7 @@ data/                        运行时生成：models.json（模型登记）、o
 ## 10. 常用命令速查
 
 ```bash
-python -m pytest                       # 自动测试（33 项）
+python -m pytest                       # 自动测试（36 项）
 python -m pytest -k barge              # 只跑某类测试（这里是打断）
 python -m app                          # 启动平台（PORT=9999 python -m app 可改端口）
 RELOAD=1 python -m app                 # 改 Python 代码后自动重启（开发时方便）

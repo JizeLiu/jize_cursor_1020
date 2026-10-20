@@ -21,11 +21,21 @@ modelSelect.addEventListener('change', () => {
   streamBox.disabled = !m.streaming;
   if (!m.streaming) streamBox.checked = false;
   $('#asr-hint').textContent = m.has_vad ? '服务端已部署 VAD，长音频由服务端自动切分。' : '服务端未声明 VAD：长音频建议先在本地切分。';
+  updateMicHint();
+});
+
+/** 麦克风模式的说明：FunASR 逐字实时；vLLM 类模型勾选流式后按「一句一句」出字，否则录完整段识别。 */
+function updateMicHint() {
+  const m = getModel(modelSelect.value);
+  if (!m) return;
   $('#asr-mic-hint').textContent =
     m.protocol === 'funasr_ws'
       ? '实时模式：边说边识别，点击停止后给出最终结果。'
-      : '录制模式：点击停止后整段发送识别' + (m.streaming ? '，结果流式返回。' : '。');
-});
+      : streamBox.checked
+        ? '实时分段模式：每说完一句（停顿约 0.7 秒）就识别并显示这一句，点击停止后结束。'
+        : '录制模式：点击停止后整段发送识别。';
+}
+streamBox.addEventListener('change', updateMicHint);
 
 // ---------------------------------------------------------------- 显示结果
 
