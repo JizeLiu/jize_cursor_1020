@@ -275,3 +275,47 @@ def test_call_echo_mode_without_llm(client, models):
                 notes.append(ev.get("note"))
         ws.send_json({"type": "stop"})
     assert notes and "复读" in notes[0]
+
+
+def receive_call_events(ws, until, limit=800):
+    """收通话事件直到 until(ev) 为真；二进制 PCM 记为 {"type": "audio"}。"""
+    events = []
+    for _ in range(limit):
+        msg = ws.receive()
+        ev = {"type": "audio"} if msg.get("bytes") else json.loads(msg["text"])
+        events.append(ev)
+        if until(ev):
+            return events
+    raise AssertionError(f"没等到预期事件：{[e['type'] for e in events[-8:]]}")
+
+
+def test_call_barge_in_stops_ai_speech(client, models):
+    """AI 正在说话时用户开口：服务端取消本轮、通知浏览器清空播放，并把用户的新话当作下一轮。"""
+    cfg = {"asr_id": models["asr_field"], "tts_id": models["tts"], "barge_in": True}
+    with client.websocket_connect("/ws/call") as ws:
+        ws.send_json(cfg)
+        send_pcm(ws, speech_pcm())
+        receive_call_events(ws, lambda e: e["type"] == "state" and e["state"] == "speaking")
+
+        send_pcm(ws, speech_pcm())  # AI 还在说，用户又说话了
+        events = receive_call_events(ws, lambda e: e["type"] == "interrupted")
+        kinds = [e["type"] for e in events]
+        assert "clear" in kinds and kinds.index("clear") < kinds.index("interrupted")
+
+        after = receive_call_events(ws, lambda e: e["type"] == "user_text")  # 打断的那句话被识别成新一轮
+        assert after[-1]["text"]
+        ws.send_json({"type": "stop"})
+
+
+def test_call_without_barge_in_ignores_speech_while_ai_talks(client, models):
+    cfg = {"asr_id": models["asr_field"], "tts_id": models["tts"], "barge_in": False}
+    with client.websocket_connect("/ws/call") as ws:
+        ws.send_json(cfg)
+        send_pcm(ws, speech_pcm())
+        receive_call_events(ws, lambda e: e["type"] == "state" and e["state"] == "speaking")
+        send_pcm(ws, speech_pcm())
+        events = receive_call_events(ws, lambda e: e["type"] == "turn_end")
+        kinds = [e["type"] for e in events]
+        assert "clear" not in kinds and "interrupted" not in kinds
+        assert kinds.count("user_text") == 0  # 说话被忽略，没有开启新一轮
+        ws.send_json({"type": "stop"})

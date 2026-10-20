@@ -65,3 +65,10 @@ def test_vad_segments_speech():
 
 def test_vad_ignores_silence():
     assert EnergyVad().feed(b"\x00\x00" * 16000 * 3) == []
+
+
+def test_vad_speech_ms_grows_while_speaking():
+    vad = EnergyVad()
+    assert vad.speech_ms == 0
+    vad.feed(speech_pcm(tone_sec=1.0, gap_sec=0.2)[: 16000 * 2 * 7 // 10])  # 0.2s 静音 + 0.5s 声音
+    assert vad.speaking and vad.speech_ms >= 240

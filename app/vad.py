@@ -47,6 +47,11 @@ class EnergyVad:
         self._silence = 0
         self._speech_frames = 0
 
+    @property
+    def speech_ms(self) -> int:
+        """当前这段话已经说了多久（只算有声的部分），没在说话时为 0。"""
+        return self._speech_frames * 20 if self.speaking else 0
+
     def feed(self, pcm: bytes) -> list[VadEvent]:
         events: list[VadEvent] = []
         self._buf += pcm

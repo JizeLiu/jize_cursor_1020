@@ -7,8 +7,9 @@
     -> 回复按句切开，一句一句送 TTS（PCM 流式）
     -> PCM 通过 WebSocket 实时发给浏览器播放
 
-打断：AI 正在思考/说话时，如果 VAD 检测到用户开口，就取消这一轮（LLM、TTS 请求都会被取消），
-并通知浏览器立刻停止播放。
+打断（barge-in）：AI 正在思考/说话时，如果用户持续说话超过 BARGE_IN_MS，就取消这一轮
+（LLM、TTS 请求都会被取消），并通知浏览器立刻停止播放，同时把用户这句话当作下一轮的输入。
+不允许打断时：AI 忙的时候用户说的话会被忽略。
 """
 
 import asyncio
@@ -24,6 +25,8 @@ from .llm import stream_chat
 from .tts import stream_tts
 from .vad import EnergyVad
 from .ws_utils import read_config, recv, send_event
+
+BARGE_IN_MS = 240  # 用户连续说话多久才算「打断」，太短容易被咳嗽、回声误触发
 
 DEFAULT_SYSTEM_PROMPT = "你是一个语音通话助手。回答要简短、口语化，一次不超过三句话，不要使用 markdown、列表或表情符号。"
 
@@ -84,10 +87,14 @@ class CallSession:
                         break
                     continue
                 for event in vad.feed(msg):
-                    if event.kind == "start" and self.barge_in and self._ai_is_busy():
-                        await self._interrupt()
-                    elif event.kind == "segment":
+                    if event.kind == "segment":
+                        if self._ai_is_busy():
+                            if not self.barge_in:
+                                continue  # 不允许打断：AI 说话期间的人声直接忽略
+                            await self._interrupt()  # 整段话在一个音频包里到达时，上面的实时检测来不及触发
                         self._start_turn(event.pcm, speech_end=time.perf_counter())
+                if self.barge_in and vad.speech_ms >= BARGE_IN_MS and self._ai_is_busy():
+                    await self._interrupt()
                 now = time.monotonic()
                 if now - last_level > 0.1:
                     last_level = now
