@@ -134,3 +134,33 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-
 .bubble { max-width: 80%; padding: 8px 12px; border-radius: 14px; background: var(--panel-2); white-space: pre-wrap; }
 .bubble.user { align-self: flex-end; background: var(--accent-2); }
 .bubble em { display: block; font-size: 12px; opacity: 0.7; font-style: normal; }
+
+/* 首页 */
+a[data-go], .link { cursor: pointer; }
+.brand { color: var(--text); text-decoration: none; }
+.link { color: var(--accent); margin-left: 6px; font-size: 12px; }
+.home-hero { text-align: center; padding: 28px 0 24px; }
+.home-hero h1 { margin: 0 0 8px; font-size: 30px; }
+.home-hero p { margin: 0 auto; max-width: 640px; color: var(--muted); }
+.feature-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.feature-card { display: flex; flex-direction: column; gap: 8px; padding: 20px; border-radius: 14px; background: var(--panel); border: 1px solid var(--border); color: var(--text); text-decoration: none; transition: transform 120ms, border-color 120ms; }
+.feature-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+.feature-card h2 { margin: 0; font-size: 18px; }
+.feature-card p { margin: 0; color: var(--muted); flex: 1; }
+.feature-icon { font-size: 32px; }
+.feature-status { font-size: 12px; color: var(--muted); }
+.feature-status.ready { color: var(--ok); }
+.feature-status.missing { color: var(--warn); }
+.models-entry { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-top: 16px; padding: 16px 20px; border-radius: 12px; background: var(--panel); border: 1px dashed var(--border); color: var(--text); text-decoration: none; }
+.models-entry:hover { border-color: var(--accent); }
+.models-count { margin-left: auto; color: var(--accent); }
+
+/* 子页面标题栏 */
+.page-head { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
+.page-head h2 { margin: 0; font-size: 20px; }
+.page-head a { color: var(--accent); text-decoration: none; }
+
+/* TTS 首包耗时 */
+.hero-metric { text-align: center; padding: 12px; border-radius: 12px; background: var(--bg); border: 1px solid var(--border); }
+.hero-value { font-size: 40px; font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
+.hero-label { color: var(--muted); font-size: 12px; }

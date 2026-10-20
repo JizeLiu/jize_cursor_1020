@@ -182,6 +182,21 @@ def test_wake_flow(client, models):
         ws.send_json({"type": "stop"})
 
 
+def test_wake_words_can_be_changed_while_listening(client, models):
+    cfg = {"model_id": models["asr_field"], "wake_words": ["完全不相关"], "fuzzy": 0, "awake_sec": 30}
+    with client.websocket_connect("/ws/wake") as ws:
+        ws.send_json(cfg)
+        ws.receive_json()
+        send_pcm(ws, speech_pcm())
+        assert collect_until(ws, "log")[-1]["hit"] is False
+        # 用户在页面上改了唤醒词：不用重新开始监听，立刻生效
+        ws.send_json({"type": "update", "wake_words": ["模拟的识别"]})
+        send_pcm(ws, speech_pcm())
+        events = collect_until(ws, "wake")
+        assert any(e["type"] == "log" and e["hit"] for e in events)
+        ws.send_json({"type": "stop"})
+
+
 def test_wake_word_not_matched_stays_asleep(client, models):
     cfg = {"model_id": models["asr_field"], "wake_words": ["你好小智"], "fuzzy": 0}
     with client.websocket_connect("/ws/wake") as ws:

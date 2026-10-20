@@ -30,6 +30,7 @@ async function synthesize() {
   $('#tts-run').disabled = true;
   $('#tts-stop').hidden = false;
 
+  $('#tts-ttfb').textContent = '计时中…';
   const t0 = performance.now(); // 计时起点：点击合成
   const metrics = {};
   try {
@@ -61,6 +62,7 @@ async function synthesize() {
       if (!value.length) continue;
       if (metrics.firstChunk === undefined) {
         metrics.firstChunk = performance.now() - t0;
+        $('#tts-ttfb').textContent = fmtMs(metrics.firstChunk);
       }
       totalBytes += value.length;
       player.push(value.buffer.slice(value.byteOffset, value.byteOffset + value.length));
@@ -73,6 +75,7 @@ async function synthesize() {
     await player.finished();
   } catch (err) {
     if (err.name !== 'AbortError') showError($('#tts-error'), err.message);
+    if (metrics.firstChunk === undefined) $('#tts-ttfb').textContent = '—';
   } finally {
     $('#tts-run').disabled = false;
     $('#tts-stop').hidden = true;
@@ -84,7 +87,6 @@ function showMetrics(m, t0, bytes, sampleRate, done) {
   const total = done ? m.total : undefined;
   renderMetrics($('#tts-metrics'), [
     ['响应头', fmtMs(m.headers), '点击合成 → 收到 HTTP 响应头'],
-    ['首包延迟 (TTFB)', fmtMs(m.firstChunk), '点击合成 → 收到第一块音频数据'],
     ['首声音', fmtMs(m.firstPlay), '点击合成 → 第一个采样送入播放（不含声卡输出延迟）'],
     ['总耗时', fmtMs(total)],
     ['音频时长', `${audioSec.toFixed(2)} s`],

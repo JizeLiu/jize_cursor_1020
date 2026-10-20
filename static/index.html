@@ -9,8 +9,9 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><span class="logo">◉</span> 语音模型体验平台</div>
+    <a class="brand" data-go="home"><span class="logo">◉</span> 语音模型体验平台</a>
     <nav class="tabs" id="tabs">
+      <button data-page="home">首页</button>
       <button data-page="asr">语音识别 ASR</button>
       <button data-page="tts">语音合成 TTS</button>
       <button data-page="wake">语音唤醒</button>
@@ -20,14 +21,54 @@
   </header>
 
   <main>
+    <!-- ===================== 首页：四大功能入口 ===================== -->
+    <section class="page" id="page-home">
+      <div class="home-hero">
+        <h1>语音模型体验平台</h1>
+        <p>体验你自己部署的 ASR / TTS 模型。先在「模型管理」添加模型（名称 + 接口地址），再选一个功能开始体验。</p>
+      </div>
+      <div class="feature-grid">
+        <a class="feature-card" data-go="asr">
+          <div class="feature-icon">🎙️</div>
+          <h2>语音识别 ASR</h2>
+          <p>选模型、手动配置热词，流式或非流式输出，上传音频文件或用麦克风录音。</p>
+          <span class="feature-status" data-kind="asr"></span>
+        </a>
+        <a class="feature-card" data-go="tts">
+          <div class="feature-icon">🔊</div>
+          <h2>语音合成 TTS</h2>
+          <p>输入文字实时合成语音，边收边播，显示首包耗时，结果保存为 WAV 可反复回放和下载。</p>
+          <span class="feature-status" data-kind="tts"></span>
+        </a>
+        <a class="feature-card" data-go="wake">
+          <div class="feature-icon">👂</div>
+          <h2>语音唤醒</h2>
+          <p>自定义唤醒词，实时监听麦克风，说出唤醒词后才开始识别。</p>
+          <span class="feature-status" data-kind="asr"></span>
+        </a>
+        <a class="feature-card" data-go="call">
+          <div class="feature-icon">📞</div>
+          <h2>语音通话</h2>
+          <p>选择 ASR 和 TTS 模型，像给豆包打电话一样和 AI 实时对话，支持随时打断。</p>
+          <span class="feature-status" data-kind="call"></span>
+        </a>
+      </div>
+      <a class="models-entry" data-go="models">
+        <strong>模型管理</strong>
+        <span class="muted">添加 / 编辑 / 测试你部署的 ASR、TTS、对话模型（名称 + 接口地址）</span>
+        <span class="models-count" id="home-model-count"></span>
+      </a>
+    </section>
+
     <!-- ===================== 1. 语音识别 ASR ===================== -->
-    <section class="page" id="page-asr">
+    <section class="page" id="page-asr" hidden>
+      <div class="page-head"><a data-go="home">← 首页</a><h2>语音识别 ASR</h2></div>
       <div class="grid">
         <div class="col">
           <div class="panel">
             <header><h3>模型与参数</h3></header>
             <div class="panel-body">
-              <label class="field"><span>ASR 模型</span><select id="asr-model"></select></label>
+              <label class="field"><span>ASR 模型 <a class="link" data-go="models">添加/管理模型</a></span><select id="asr-model"></select></label>
               <div class="badges" id="asr-badges"></div>
               <label class="check"><input type="checkbox" id="asr-stream" checked /> 流式输出</label>
               <label class="field"><span>语言（可留空；Fun-ASR-Nano 建议填 zh）</span><input id="asr-language" placeholder="zh / en" /></label>
@@ -80,12 +121,13 @@
 
     <!-- ===================== 2. 语音合成 TTS ===================== -->
     <section class="page" id="page-tts" hidden>
+      <div class="page-head"><a data-go="home">← 首页</a><h2>语音合成 TTS</h2></div>
       <div class="grid">
         <div class="col">
           <div class="panel">
             <header><h3>模型与参数</h3></header>
             <div class="panel-body">
-              <label class="field"><span>TTS 模型</span><select id="tts-model"></select></label>
+              <label class="field"><span>TTS 模型 <a class="link" data-go="models">添加/管理模型</a></span><select id="tts-model"></select></label>
               <label class="field"><span>音色 / voice（留空用模型默认）</span><input id="tts-voice" /></label>
               <label class="field"><span>语速 <b id="tts-speed-label">1.0x</b></span><input type="range" id="tts-speed" min="0.5" max="2" step="0.1" value="1" /></label>
               <label class="check"><input type="checkbox" id="tts-stream" checked /> 让模型流式输出（stream=true）</label>
@@ -109,7 +151,13 @@
 
           <div class="panel">
             <header><h3>延迟与指标</h3></header>
-            <div class="panel-body"><div class="metrics" id="tts-metrics"></div></div>
+            <div class="panel-body">
+              <div class="hero-metric">
+                <div class="hero-value" id="tts-ttfb">—</div>
+                <div class="hero-label">首包耗时：从提交文字到收到第一个音频包</div>
+              </div>
+              <div class="metrics" id="tts-metrics"></div>
+            </div>
           </div>
 
           <div class="panel">
@@ -127,13 +175,19 @@
 
     <!-- ===================== 3. 语音唤醒 ===================== -->
     <section class="page" id="page-wake" hidden>
+      <div class="page-head"><a data-go="home">← 首页</a><h2>语音唤醒</h2></div>
       <div class="grid">
         <div class="col">
           <div class="panel">
             <header><h3>模型与唤醒词</h3></header>
             <div class="panel-body">
-              <label class="field"><span>ASR 模型</span><select id="wake-model"></select></label>
-              <label class="field"><span>唤醒词（多个用逗号分隔，可把常见误识别写法也加进去）</span><input id="wake-words" value="你好小智" /></label>
+              <label class="field"><span>ASR 模型 <a class="link" data-go="models">添加/管理模型</a></span><select id="wake-model"></select></label>
+              <div class="field">
+                <span>唤醒词（自定义，可添加多个；监听中修改立即生效）</span>
+                <div class="row"><input id="wake-word-input" placeholder="输入唤醒词，如：你好小智" /><button id="wake-word-add">添加</button></div>
+                <div class="chips" id="wake-word-list"></div>
+                <small class="muted">小技巧：ASR 可能把唤醒词识别成同音字，可以把常见误识别写法也添加进来。</small>
+              </div>
               <label class="field"><span>模糊匹配容错 <b id="wake-fuzzy-label">25%</b></span><input type="range" id="wake-fuzzy" min="0" max="0.5" step="0.05" value="0.25" /></label>
               <label class="field"><span>唤醒后保持时长 <b id="wake-awake-label">8s</b>（无人说话则回到待机）</span><input type="range" id="wake-awake" min="3" max="30" step="1" value="8" /></label>
               <label class="field"><span>VAD 灵敏度：高于底噪 <b id="wake-sens-label">12</b> dB 算说话</span><input type="range" id="wake-sens" min="6" max="24" step="1" value="12" /></label>
@@ -173,12 +227,13 @@
 
     <!-- ===================== 4. 语音通话 ===================== -->
     <section class="page" id="page-call" hidden>
+      <div class="page-head"><a data-go="home">← 首页</a><h2>语音通话</h2></div>
       <div class="grid">
         <div class="col">
           <div class="panel">
             <header><h3>通话配置</h3></header>
             <div class="panel-body">
-              <label class="field"><span>ASR 模型（听）</span><select id="call-asr"></select></label>
+              <label class="field"><span>ASR 模型（听） <a class="link" data-go="models">添加/管理模型</a></span><select id="call-asr"></select></label>
               <label class="field"><span>TTS 模型（说）</span><select id="call-tts"></select></label>
               <label class="field"><span>对话大模型（想，可选）</span><select id="call-llm"></select></label>
               <label class="field"><span>系统提示词</span><textarea id="call-prompt" rows="4">你是一个语音通话助手。回答要简短、口语化，一次不超过三句话，不要使用 markdown、列表或表情符号。</textarea></label>
@@ -217,6 +272,7 @@
 
     <!-- ===================== 5. 模型管理 ===================== -->
     <section class="page" id="page-models" hidden>
+      <div class="page-head"><a data-go="home">← 首页</a><h2>模型管理</h2></div>
       <div class="stack-page">
         <div class="panel">
           <header><h3>已配置的模型</h3></header>

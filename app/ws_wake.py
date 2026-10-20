@@ -22,7 +22,10 @@ from .ws_utils import read_config, recv, send_event
 
 
 async def handle_wake(ws: WebSocket, store: ModelStore) -> None:
-    """配置 JSON: {model_id, wake_words, fuzzy, awake_sec, sensitivity, language, hotwords}"""
+    """配置 JSON: {model_id, wake_words, fuzzy, awake_sec, sensitivity, language, hotwords}
+
+    监听中还可以发 {"type": "update", "wake_words": [...], "fuzzy": 0.25, "awake_sec": 8} 实时修改。
+    """
     await ws.accept()
     try:
         cfg = await read_config(ws)
@@ -83,6 +86,10 @@ async def handle_wake(ws: WebSocket, store: ModelStore) -> None:
             if isinstance(msg, dict):
                 if msg.get("type") == "stop":
                     break
+                if msg.get("type") == "update":  # 监听过程中修改唤醒词等设置，立即生效
+                    wake_words = [w.strip() for w in msg.get("wake_words", wake_words) if w.strip()]
+                    fuzzy = float(msg.get("fuzzy", fuzzy))
+                    awake_sec = float(msg.get("awake_sec", awake_sec))
                 continue
             for event in vad.feed(msg):
                 if event.kind == "segment":

@@ -13,10 +13,47 @@ const mic = new MicStream();
 let socket = null;
 let countdown = null;
 
-const wakeWords = () => $('#wake-words').value.split(/[,，、\n]/).map((s) => s.trim()).filter(Boolean);
+// ---------------------------------------------------------------- 自定义唤醒词
+// 唤醒词保存在浏览器 localStorage；监听过程中增删也会立即通知后端。
+let wordList = JSON.parse(localStorage.getItem('wake:words') || '["你好小智"]');
+const wakeWords = () => wordList;
+
+function renderWords() {
+  $('#wake-word-list').innerHTML = wordList.length
+    ? wordList.map((w, i) => `<span class="chip">${escapeHtml(w)}<button data-i="${i}" aria-label="删除">×</button></span>`).join('')
+    : '<span class="muted">还没有唤醒词，请先添加一个</span>';
+  localStorage.setItem('wake:words', JSON.stringify(wordList));
+  sendUpdate();
+}
+
+function sendUpdate() {
+  if (socket?.readyState === WebSocket.OPEN && wordList.length) {
+    socket.send(JSON.stringify({ type: 'update', wake_words: wordList, fuzzy: Number($('#wake-fuzzy').value), awake_sec: Number($('#wake-awake').value) }));
+  }
+  if ($('#wake-status').classList.contains('sleeping')) setStatus('sleeping', '待机监听中…', `请说：${wordList.join(' / ')}`);
+}
+
+function addWord() {
+  const word = $('#wake-word-input').value.trim();
+  if (word && !wordList.includes(word)) wordList.push(word);
+  $('#wake-word-input').value = '';
+  renderWords();
+}
+
+$('#wake-word-add').addEventListener('click', addWord);
+$('#wake-word-input').addEventListener('keydown', (e) => e.key === 'Enter' && addWord());
+$('#wake-word-list').addEventListener('click', (e) => {
+  if (e.target.dataset?.i === undefined) return;
+  wordList.splice(Number(e.target.dataset.i), 1);
+  renderWords();
+});
+$('#wake-fuzzy').addEventListener('change', sendUpdate);
+$('#wake-awake').addEventListener('change', sendUpdate);
+renderWords();
 
 $('#wake-start').addEventListener('click', async () => {
   if (!modelSelect.value) return;
+  if (!wordList.length) return showError($('#wake-error'), '请先添加至少一个唤醒词');
   showError($('#wake-error'), '');
   $('#wake-transcript').innerHTML = '';
   try {
